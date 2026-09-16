@@ -34,21 +34,32 @@ func (h *AttachmentHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/files", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
 
-		r.Post("/upload", h.Upload)
-		r.Get("/{id}", h.GetMetadata)
-		r.Get("/{id}/download", h.Download)
-		r.Delete("/{id}", h.DeleteFile)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("file:upload"))
+			r.Post("/upload", h.Upload)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("file:read"))
+			r.Get("/{id}", h.GetMetadata)
+			r.Get("/{id}/download", h.Download)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("file:delete"))
+			r.Delete("/{id}", h.DeleteFile)
+		})
 	})
 
 	// Polymorphic entity attachments endpoints
 	r.Route("/attachments", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
+		r.Use(middleware.RequirePermission("attachment:manage"))
 
 		r.Post("/", h.Attach)
 		r.Get("/{entityType}/{entityId}", h.ListByEntity)
 		r.Delete("/{id}", h.Detach)
 	})
 }
+
 
 func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := shared.RequireTenantID(r.Context())

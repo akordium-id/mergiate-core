@@ -26,12 +26,22 @@ func (h *DocumentHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/documents", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
 
-		r.Post("/", h.Create)
-		r.Get("/", h.List)
-		r.Get("/{id}", h.GetByID)
-		r.Post("/{id}/transition", h.Transition)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("document:read"))
+			r.Get("/", h.List)
+			r.Get("/{id}", h.GetByID)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("document:create"))
+			r.Post("/", h.Create)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("document:transition"))
+			r.Post("/{id}/transition", h.Transition)
+		})
 	})
 }
+
 
 func (h *DocumentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var cmd document.CreateDocumentCommand

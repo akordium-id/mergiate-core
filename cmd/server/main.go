@@ -48,6 +48,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// A4: JWT secret hygiene — refuse to start in production with insecure secret.
+	if err := cfg.ValidateJWTSecret(); err != nil {
+		slog.Error("SECURITY: refusing to start — insecure JWT configuration", slog.Any("error", err))
+		os.Exit(1)
+	}
+	if config.IsInsecureJWTSecret(cfg.JWTSecret) {
+		slog.Warn("SECURITY WARNING: using insecure default JWT secret — set JWT_SECRET in production")
+	}
+
 	slog.Info("starting application",
 		slog.String("app", cfg.AppName),
 		slog.String("env", cfg.AppEnv),
@@ -83,7 +92,7 @@ func main() {
 	serviceAccountRepo := postgres.NewServiceAccountRepository(dbPool)
 
 	// Pluggable Storage Driver
-	storageDriver, err := local.NewDriver("./storage/uploads")
+	storageDriver, err := local.NewDriver(cfg.StoragePath)
 	if err != nil {
 		slog.Error("failed to initialize storage driver", slog.Any("error", err))
 		os.Exit(1)
@@ -113,7 +122,7 @@ func main() {
 	commUsecase := commusecase.NewUsecase(commRepo, auditRepo, attachmentRepo, outboxRepo)
 	serviceAccountUsecase := identityusecase.NewServiceAccountUsecase(serviceAccountRepo)
 
-	tenantHandler := v1.NewTenantHandler(tenantUsecase)
+	tenantHandler := v1.NewTenantHandler(tenantUsecase, tokenMgr)
 	orgHandler := v1.NewOrganizationHandler(orgUsecase)
 	partyHandler := v1.NewPartyHandler(partyUsecase)
 	productHandler := v1.NewProductHandler(productUsecase)
@@ -142,22 +151,23 @@ func main() {
 	moduleRegistry.BindSubscriptions()
 
 	handlers := deliveryhttp.Handlers{
-		TenantHandler:        tenantHandler,
-		OrganizationHandler:  orgHandler,
-		PartyHandler:         partyHandler,
-		ProductHandler:       productHandler,
-		DocumentHandler:      docHandler,
-		AuditHandler:         auditHandler,
-		AuthHandler:          authHandler,
-		IdentityHandler:      identityHandler,
-		CustomFieldHandler:   customFieldHandler,
-		SequenceHandler:      sequenceHandler,
+		TenantHandler:         tenantHandler,
+		OrganizationHandler:   orgHandler,
+		PartyHandler:          partyHandler,
+		ProductHandler:        productHandler,
+		DocumentHandler:       docHandler,
+		AuditHandler:          auditHandler,
+		AuthHandler:           authHandler,
+		IdentityHandler:       identityHandler,
+		CustomFieldHandler:    customFieldHandler,
+		SequenceHandler:       sequenceHandler,
 		AttachmentHandler:     attachmentHandler,
 		CommunicationHandler:  commHandler,
 		ServiceAccountHandler: serviceAccountHandler,
 		ModuleRegistry:        moduleRegistry,
 		TokenManager:          tokenMgr,
 		ApiKeyValidator:       serviceAccountUsecase,
+		CORSAllowedOrigins:    cfg.CORSAllowedOrigins,
 	}
 
 	router := deliveryhttp.NewRouter(dbPool, handlers)

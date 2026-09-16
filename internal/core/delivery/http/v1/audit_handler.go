@@ -24,10 +24,12 @@ func NewAuditHandler(usecase audit.Usecase) *AuditHandler {
 func (h *AuditHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/audit-logs", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
+		r.Use(middleware.RequirePermission("audit:read"))
 
 		r.Get("/", h.List)
 	})
 }
+
 
 func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()

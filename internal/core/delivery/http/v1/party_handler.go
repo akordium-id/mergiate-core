@@ -26,20 +26,36 @@ func (h *PartyHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/parties", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
 
-		r.Post("/", h.Create)
-		r.Get("/", h.List)
-		r.Get("/{id}", h.GetByID)
-		r.Put("/{id}", h.Update)
+		// Read operations
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("party:read"))
+			r.Get("/", h.List)
+			r.Get("/{id}", h.GetByID)
+		})
 
-		// Party roles
-		r.Post("/{id}/roles", h.AddRole)
-		r.Delete("/{id}/roles/{roleId}", h.RemoveRole)
+		// Create
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("party:create"))
+			r.Post("/", h.Create)
+			r.Post("/{id}/roles", h.AddRole)
+			r.Post("/{id}/addresses", h.AddAddress)
+			r.Post("/{id}/contacts", h.AddContact)
+		})
 
-		// Party addresses & contacts
-		r.Post("/{id}/addresses", h.AddAddress)
-		r.Post("/{id}/contacts", h.AddContact)
+		// Update
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("party:update"))
+			r.Put("/{id}", h.Update)
+		})
+
+		// Delete
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("party:delete"))
+			r.Delete("/{id}/roles/{roleId}", h.RemoveRole)
+		})
 	})
 }
+
 
 func (h *PartyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var cmd partyuc.CreatePartyCommand

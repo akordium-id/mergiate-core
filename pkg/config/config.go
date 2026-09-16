@@ -1,25 +1,54 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
+// insecureJWTSecretFallback is the known insecure default. Production must override it.
+const insecureJWTSecretFallback = "mergiate-insecure-secret-key-change-in-production"
+
 type Config struct {
-	AppEnv         string
-	AppPort        string
-	AppName        string
-	DatabaseURL    string
-	DBMaxConns     int32
-	DBMinConns     int32
-	DBMaxConnIdle  time.Duration
-	DBMaxConnLife  time.Duration
-	JWTSecret      string
-	JWTExpiry      time.Duration
+	AppEnv             string
+	AppPort            string
+	AppName            string
+	DatabaseURL        string
+	DBMaxConns         int32
+	DBMinConns         int32
+	DBMaxConnIdle      time.Duration
+	DBMaxConnLife      time.Duration
+	JWTSecret          string
+	JWTExpiry          time.Duration
+	CORSAllowedOrigins []string // from CORS_ALLOWED_ORIGINS (comma-separated)
+	StoragePath        string   // from STORAGE_PATH
+}
+
+// IsProduction returns true if AppEnv is a production-like environment.
+func (c *Config) IsProduction() bool {
+	return c.AppEnv == "production" || c.AppEnv == "prod"
+}
+
+// ValidateJWTSecret returns an error if the JWT secret is insecure in a production environment.
+func (c *Config) ValidateJWTSecret() error {
+	if c.JWTSecret == "" || c.JWTSecret == insecureJWTSecretFallback {
+		if c.IsProduction() {
+			return errors.New("JWT_SECRET must be set to a strong secret in production (current value is empty or the insecure default)")
+		}
+		// Non-production: warn but continue
+		return nil
+	}
+	return nil
+}
+
+// IsInsecureJWTSecret returns true when the JWT secret is empty or the known insecure default.
+func IsInsecureJWTSecret(secret string) bool {
+	return secret == "" || secret == insecureJWTSecretFallback
 }
 
 func Load() (*Config, error) {
@@ -46,25 +75,42 @@ func Load() (*Config, error) {
 	maxConns := getEnvAsInt32("DB_MAX_CONNS", 25)
 	minConns := getEnvAsInt32("DB_MIN_CONNS", 5)
 
-	jwtSecret := getEnv("JWT_SECRET", "mergiate-insecure-secret-key-change-in-production")
+	jwtSecret := getEnv("JWT_SECRET", insecureJWTSecretFallback)
 	jwtExpiryStr := getEnv("JWT_EXPIRY", "24h")
 	jwtExpiry, err := time.ParseDuration(jwtExpiryStr)
 	if err != nil {
 		jwtExpiry = 24 * time.Hour
 	}
 
-	return &Config{
-		AppEnv:        appEnv,
-		AppPort:       appPort,
-		AppName:       appName,
-		DatabaseURL:   dbURL,
-		DBMaxConns:    maxConns,
-		DBMinConns:    minConns,
-		DBMaxConnIdle: 15 * time.Minute,
-		DBMaxConnLife: 1 * time.Hour,
-		JWTSecret:     jwtSecret,
-		JWTExpiry:     jwtExpiry,
-	}, nil
+	// CORS_ALLOWED_ORIGINS: comma-separated list; empty = no cross-origin.
+	// Dev default: allow localhost:3000 for Nuxt dev server.
+	corsRaw := getEnv("CORS_ALLOWED_ORIGINS", "")
+	var corsOrigins []string
+	if corsRaw != "" {
+		for o := range strings.SplitSeq(corsRaw, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				corsOrigins = append(corsOrigins, trimmed)
+			}
+		}
+	}
+
+	storagePath := getEnv("STORAGE_PATH", "./storage/uploads")
+
+	cfg := &Config{
+		AppEnv:             appEnv,
+		AppPort:            appPort,
+		AppName:            appName,
+		DatabaseURL:        dbURL,
+		DBMaxConns:         maxConns,
+		DBMinConns:         minConns,
+		DBMaxConnIdle:      15 * time.Minute,
+		DBMaxConnLife:      1 * time.Hour,
+		JWTSecret:          jwtSecret,
+		JWTExpiry:          jwtExpiry,
+		CORSAllowedOrigins: corsOrigins,
+		StoragePath:        storagePath,
+	}
+	return cfg, nil
 }
 
 func getEnv(key, fallback string) string {
