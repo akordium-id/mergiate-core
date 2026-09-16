@@ -103,3 +103,59 @@ bus.Subscribe("document.*", func(ctx context.Context, evt event.Event) error {
     return nil
 })
 ```
+
+---
+
+## 5. Transactional Guarantee: `database.WithTx`
+
+> **Added**: ERP Dogfood Refactor (Sep 2026)
+
+The audit log and outbox event writes are no longer "best-effort" fire-and-forget — they are wrapped in the **same database transaction** as the primary aggregate mutation via `database.WithTx`.
+
+```go
+// pkg/database/tx.go
+func WithTx(ctx context.Context, pool *pgxpool.Pool, fn func(ctx context.Context) error) error
+```
+
+### How it works in the usecase layer
+
+```go
+// Example: document_usecase.go — TransitionDocument
+func (uc *DocumentUsecase) TransitionDocument(ctx context.Context, cmd TransitionCmd) error {
+    return database.WithTx(ctx, uc.pool, func(ctx context.Context) error {
+        // 1. Load & mutate aggregate
+        doc, _ := uc.docRepo.FindByID(ctx, cmd.ID)
+        doc.Transition(cmd.ToStatus)
+
+        // 2. Persist primary state
+        uc.docRepo.Update(ctx, doc)              // uses tx-scoped queries
+
+        // 3. Write audit log (same tx)
+        uc.auditRepo.Create(ctx, auditEntry)     // uses tx-scoped queries
+
+        // 4. Write outbox event (same tx)
+        uc.outboxRepo.Create(ctx, outboxEvent)   // uses tx-scoped queries
+
+        return nil  // → Commit all 3 writes atomically
+        // any error → Rollback all 3 writes
+    })
+}
+```
+
+### Repository-level transaction awareness
+
+Repositories detect the active transaction via `TxFromContext(ctx)`:
+
+```go
+// q(ctx) returns either a tx-scoped or pool-scoped sqlc.Queries
+func (r *DocumentRepo) q(ctx context.Context) *sqlc.Queries {
+    if tx := database.TxFromContext(ctx); tx != nil {
+        return r.queries.WithTx(tx)
+    }
+    return r.queries
+}
+```
+
+### Invariant
+> **Audit log entry + outbox event are atomically coupled to the aggregate state change.** If the audit or outbox write fails, the entire mutation is rolled back — leaving the system in a consistent state.
+
