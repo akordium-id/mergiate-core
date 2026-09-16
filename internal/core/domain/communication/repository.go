@@ -21,4 +21,6 @@ type Repository interface {
 	MarkNotificationRead(ctx context.Context, tenantID, userID, id shared.ID) error
 	MarkAllNotificationsRead(ctx context.Context, tenantID, userID shared.ID) error
 	CountUnreadNotifications(ctx context.Context, tenantID, userID shared.ID) (int64, error)
+
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 }

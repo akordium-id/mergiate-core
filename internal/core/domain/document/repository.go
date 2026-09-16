@@ -28,4 +28,6 @@ type Repository interface {
 
 	RecordTransition(ctx context.Context, trans *DocumentTransition) error
 	ListTransitions(ctx context.Context, tenantID, documentID shared.ID) ([]DocumentTransition, error)
+
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 }

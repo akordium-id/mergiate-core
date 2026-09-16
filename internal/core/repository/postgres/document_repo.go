@@ -13,6 +13,7 @@ import (
 	"github.com/akordium-id/mergiate-core/internal/core/domain/document"
 	"github.com/akordium-id/mergiate-core/internal/core/domain/shared"
 	"github.com/akordium-id/mergiate-core/internal/core/repository/postgres/sqlc"
+	"github.com/akordium-id/mergiate-core/pkg/database"
 )
 
 type documentRepository struct {
@@ -26,6 +27,17 @@ func NewDocumentRepository(pool *pgxpool.Pool) document.Repository {
 		pool:    pool,
 		queries: sqlc.New(pool),
 	}
+}
+
+func (r *documentRepository) q(ctx context.Context) *sqlc.Queries {
+	if tx := database.TxFromContext(ctx); tx != nil {
+		return r.queries.WithTx(tx)
+	}
+	return r.queries
+}
+
+func (r *documentRepository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return database.WithTx(ctx, r.pool, fn)
 }
 
 func (r *documentRepository) CreateDocument(ctx context.Context, doc *document.Document) error {
@@ -67,7 +79,7 @@ func (r *documentRepository) CreateDocument(ctx context.Context, doc *document.D
 		UpdatedAt:      pgtype.Timestamptz{Time: doc.UpdatedAt, Valid: true},
 	}
 
-	row, err := r.queries.CreateDocument(ctx, params)
+	row, err := r.q(ctx).CreateDocument(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -79,7 +91,7 @@ func (r *documentRepository) CreateDocument(ctx context.Context, doc *document.D
 }
 
 func (r *documentRepository) GetDocumentByID(ctx context.Context, tenantID, id shared.ID) (*document.Document, error) {
-	row, err := r.queries.GetDocumentByID(ctx, sqlc.GetDocumentByIDParams{
+	row, err := r.q(ctx).GetDocumentByID(ctx, sqlc.GetDocumentByIDParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		ID:       shared.ToPgUUID(id),
 	})
@@ -108,7 +120,7 @@ func (r *documentRepository) GetDocumentByID(ctx context.Context, tenantID, id s
 }
 
 func (r *documentRepository) GetDocumentByNumber(ctx context.Context, tenantID shared.ID, docType document.DocumentType, number string) (*document.Document, error) {
-	row, err := r.queries.GetDocumentByNumber(ctx, sqlc.GetDocumentByNumberParams{
+	row, err := r.q(ctx).GetDocumentByNumber(ctx, sqlc.GetDocumentByNumberParams{
 		TenantID:       shared.ToPgUUID(tenantID),
 		DocumentType:   string(docType),
 		DocumentNumber: number,
@@ -158,7 +170,7 @@ func (r *documentRepository) ListDocuments(ctx context.Context, tenantID shared.
 		statusStr = &s
 	}
 
-	total, err := r.queries.CountDocuments(ctx, sqlc.CountDocumentsParams{
+	total, err := r.q(ctx).CountDocuments(ctx, sqlc.CountDocumentsParams{
 		TenantID:       shared.ToPgUUID(tenantID),
 		OrganizationID: orgID,
 		DocumentType:   docTypeStr,
@@ -168,7 +180,7 @@ func (r *documentRepository) ListDocuments(ctx context.Context, tenantID shared.
 		return nil, 0, err
 	}
 
-	rows, err := r.queries.ListDocuments(ctx, sqlc.ListDocumentsParams{
+	rows, err := r.q(ctx).ListDocuments(ctx, sqlc.ListDocumentsParams{
 		TenantID:       shared.ToPgUUID(tenantID),
 		Limit:          limit,
 		Offset:         offset,
@@ -189,7 +201,7 @@ func (r *documentRepository) ListDocuments(ctx context.Context, tenantID shared.
 }
 
 func (r *documentRepository) UpdateDocumentStatus(ctx context.Context, tenantID, id shared.ID, newStatus document.Status) error {
-	_, err := r.queries.UpdateDocumentStatus(ctx, sqlc.UpdateDocumentStatusParams{
+	_, err := r.q(ctx).UpdateDocumentStatus(ctx, sqlc.UpdateDocumentStatusParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		ID:       shared.ToPgUUID(id),
 		Status:   string(newStatus),
@@ -198,7 +210,7 @@ func (r *documentRepository) UpdateDocumentStatus(ctx context.Context, tenantID,
 }
 
 func (r *documentRepository) UpdateDocumentTotal(ctx context.Context, tenantID, id shared.ID, total shared.Money) error {
-	_, err := r.queries.UpdateDocumentTotal(ctx, sqlc.UpdateDocumentTotalParams{
+	_, err := r.q(ctx).UpdateDocumentTotal(ctx, sqlc.UpdateDocumentTotalParams{
 		TenantID:    shared.ToPgUUID(tenantID),
 		ID:          shared.ToPgUUID(id),
 		TotalAmount: total.Amount(),
@@ -233,7 +245,7 @@ func (r *documentRepository) CreateLines(ctx context.Context, lines []document.D
 			UpdatedAt:   pgtype.Timestamptz{Time: line.UpdatedAt, Valid: true},
 		}
 
-		row, err := r.queries.CreateDocumentLine(ctx, params)
+		row, err := r.q(ctx).CreateDocumentLine(ctx, params)
 		if err != nil {
 			return err
 		}
@@ -246,7 +258,7 @@ func (r *documentRepository) CreateLines(ctx context.Context, lines []document.D
 }
 
 func (r *documentRepository) ListLines(ctx context.Context, tenantID, documentID shared.ID) ([]document.DocumentLine, error) {
-	rows, err := r.queries.ListDocumentLines(ctx, sqlc.ListDocumentLinesParams{
+	rows, err := r.q(ctx).ListDocumentLines(ctx, sqlc.ListDocumentLinesParams{
 		TenantID:   shared.ToPgUUID(tenantID),
 		DocumentID: shared.ToPgUUID(documentID),
 	})
@@ -315,7 +327,7 @@ func (r *documentRepository) RecordTransition(ctx context.Context, trans *docume
 		CreatedAt:  pgtype.Timestamptz{Time: trans.CreatedAt, Valid: true},
 	}
 
-	row, err := r.queries.CreateDocumentTransition(ctx, params)
+	row, err := r.q(ctx).CreateDocumentTransition(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -326,7 +338,7 @@ func (r *documentRepository) RecordTransition(ctx context.Context, trans *docume
 }
 
 func (r *documentRepository) ListTransitions(ctx context.Context, tenantID, documentID shared.ID) ([]document.DocumentTransition, error) {
-	rows, err := r.queries.ListDocumentTransitions(ctx, sqlc.ListDocumentTransitionsParams{
+	rows, err := r.q(ctx).ListDocumentTransitions(ctx, sqlc.ListDocumentTransitionsParams{
 		TenantID:   shared.ToPgUUID(tenantID),
 		DocumentID: shared.ToPgUUID(documentID),
 	})
