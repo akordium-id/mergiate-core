@@ -1,10 +1,14 @@
+// Package shared re-exports tenant context helpers from pkg/sdk.
 package shared
 
 import (
 	"context"
 	"time"
+
+	"github.com/akordium-id/mergiate-core/pkg/sdk"
 )
 
+// TenantStatus represents the lifecycle status of a tenant.
 type TenantStatus string
 
 const (
@@ -28,35 +32,18 @@ func (t Tenant) IsActive() bool {
 	return t.Status == TenantStatusActive
 }
 
-type contextKey string
-
-const (
-	tenantIDContextKey contextKey = "mergiate.tenant_id"
-)
-
 // WithTenantID stores the Tenant ID in the given context.
+// Delegates to sdk.WithTenantID so internal and external code share the same context key.
 func WithTenantID(ctx context.Context, id ID) context.Context {
-	return context.WithValue(ctx, tenantIDContextKey, id)
+	return sdk.WithTenantID(ctx, id)
 }
 
 // GetTenantID retrieves the Tenant ID from the context if present.
 func GetTenantID(ctx context.Context) (ID, bool) {
-	val := ctx.Value(tenantIDContextKey)
-	if val == nil {
-		return NilID(), false
-	}
-	id, ok := val.(ID)
-	if !ok || id == NilID() {
-		return NilID(), false
-	}
-	return id, true
+	return sdk.GetTenantID(ctx)
 }
 
 // RequireTenantID retrieves the Tenant ID from context, returning ErrTenantRequired if missing.
 func RequireTenantID(ctx context.Context) (ID, error) {
-	id, ok := GetTenantID(ctx)
-	if !ok {
-		return NilID(), ErrTenantRequired
-	}
-	return id, nil
+	return sdk.RequireTenantID(ctx)
 }
