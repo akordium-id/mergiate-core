@@ -2,7 +2,7 @@
 -- Adds permissions that were missing from the initial catalog.
 -- Uses ON CONFLICT DO NOTHING so this is safe to re-run.
 
-INSERT INTO permissions (id, code, name, domain, description)
+INSERT INTO permissions (id, code, name, category, description)
 VALUES
     -- Tenant management
     (gen_random_uuid(), 'tenant:manage', 'Manage Tenants', 'tenant', 'Permission to create and update tenant records'),
