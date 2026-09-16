@@ -1,64 +1,25 @@
+// Package shared re-exports public primitives from pkg/sdk for use within the
+// internal implementation. External modules should import pkg/sdk directly.
+//
+// The context keys, sentinel errors, and ID type originate in pkg/sdk and are
+// re-exported here so that internal packages can continue to use the shared.* names
+// without any import changes.
 package shared
 
 import (
-	"fmt"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/akordium-id/mergiate-core/pkg/sdk"
 )
 
-// ID is the universal domain identifier type, based on UUIDv7.
-type ID = uuid.UUID
+// ID is the universal domain identifier type (UUIDv7). Alias to sdk.ID.
+type ID = sdk.ID
 
-// NilID returns an empty/zero UUID.
-func NilID() ID {
-	return uuid.Nil
-}
-
-// NewID generates a new time-ordered UUIDv7.
-func NewID() (ID, error) {
-	return uuid.NewV7()
-}
-
-// MustNewID generates a new UUIDv7, panicking if system clock fails.
-func MustNewID() ID {
-	id, err := uuid.NewV7()
-	if err != nil {
-		panic(fmt.Sprintf("failed to generate UUIDv7: %v", err))
-	}
-	return id
-}
-
-// ParseID parses a string into an ID.
-func ParseID(s string) (ID, error) {
-	parsed, err := uuid.Parse(s)
-	if err != nil {
-		return NilID(), fmt.Errorf("%w: invalid UUID format", ErrInvalidInput)
-	}
-	return parsed, nil
-}
-
-// MustParseID parses a string into an ID or panics.
-func MustParseID(s string) ID {
-	id, err := ParseID(s)
-	if err != nil {
-		panic(err)
-	}
-	return id
-}
-
-// ToPgUUID converts shared.ID to pgtype.UUID for pgx/sqlc compatibility.
-func ToPgUUID(id ID) pgtype.UUID {
-	return pgtype.UUID{
-		Bytes: id,
-		Valid: id != uuid.Nil,
-	}
-}
-
-// FromPgUUID converts pgtype.UUID to shared.ID.
-func FromPgUUID(u pgtype.UUID) ID {
-	if !u.Valid {
-		return NilID()
-	}
-	return ID(u.Bytes)
-}
+// ID helpers — delegated to sdk.
+var (
+	NilID       = sdk.NilID
+	NewID       = sdk.NewID
+	MustNewID   = sdk.MustNewID
+	ParseID     = sdk.ParseID
+	MustParseID = sdk.MustParseID
+	ToPgUUID    = sdk.ToPgUUID
+	FromPgUUID  = sdk.FromPgUUID
+)

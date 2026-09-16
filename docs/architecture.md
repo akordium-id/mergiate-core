@@ -108,3 +108,93 @@ ctx := shared.WithTenantID(r.Context(), tenantID)
 ```
 
 Usecases and repositories retrieve this context using `shared.RequireTenantID(ctx)` to guarantee that database queries are scoped to the authenticated tenant.
+
+---
+
+## 6. Public SDK (`pkg/sdk`)
+
+> **Added**: ERP Dogfood Refactor (Sep 2026)
+
+Domain primitives that external modules and plugin authors need are exported via `pkg/sdk`. The `internal/core/domain/shared` package is now a thin alias layer pointing to `pkg/sdk`.
+
+| Package | Types Exported |
+|---|---|
+| `pkg/sdk` | `ID`, `NewID()` (UUIDv7) |
+| `pkg/sdk` | `Money`, `NewMoney()`, `MustMoney()` |
+| `pkg/sdk` | `Quantity`, `NewQuantity()` |
+| `pkg/sdk` | `AuthClaims`, `WithAuthClaims()`, `AuthClaimsFromContext()`, `HasPermission()` |
+| `pkg/sdk` | `TenantID`, `WithTenantID()`, `RequireTenantID()` |
+| `pkg/sdk` | `ErrUnauthorized`, `ErrForbidden`, `ErrNotFound`, `ErrConflict`, `ErrBadRequest` |
+| `pkg/sdk` | `Version`, `BuildInfo` |
+
+### Import rule
+- Modules **import `pkg/sdk`**, never `internal/core/domain/shared` directly.
+- Core internals may still use `internal/core/domain/shared` — it simply re-exports from `pkg/sdk`.
+
+---
+
+## 7. App Assembly (`pkg/app`)
+
+`pkg/app` wires all server dependencies (database pool, repository instances, usecases, HTTP router) in one place, keeping `cmd/server/main.go` a thin entry point.
+
+```go
+// cmd/server/main.go
+func main() {
+    cfg := config.Load()
+    application := app.New(app.Options{
+        Config:        cfg,
+        RunMigrations: true,  // run embedded SQL migrations on startup
+    })
+    application.Run()
+}
+```
+
+`app.Options.RunMigrations = true` triggers `pkg/migrations` on startup, ensuring the schema is always up-to-date without requiring a separate migration step in CI/CD.
+
+---
+
+## 8. Embedded Migrations (`pkg/migrations`)
+
+SQL migration files are embedded into the binary via `//go:embed` (Go 1.16+):
+
+```go
+// pkg/migrations/migrations.go
+//go:embed sql/*.sql
+var migrationFS embed.FS
+
+func Up(ctx context.Context, pool *pgxpool.Pool) error { ... }
+```
+
+- Uses `github.com/golang-migrate/migrate/v4` with the `iofs` driver.
+- Migration state is tracked in the `schema_migrations` table.
+- Idempotent: re-running `Up()` on an already-migrated database is a no-op.
+
+---
+
+## 9. Bootstrap & Seed (`pkg/bootstrap`, `cmd/seed`)
+
+System initialization (super-admin tenant, root organization, default roles/permissions) is handled by `pkg/bootstrap` and invocable via `make seed`.
+
+```bash
+make seed          # idempotent — safe to run multiple times
+```
+
+`cmd/seed` is a standalone binary separate from the HTTP server so seeding can be triggered in CI, Docker `entrypoint`, or Coolify deploy hooks without starting the API server.
+
+---
+
+## 10. Transactional Write Strategy (`pkg/database.WithTx`)
+
+All aggregate mutations (document create/transition, comment, outbox event, audit log) are wrapped in a **single PostgreSQL transaction** via `database.WithTx`:
+
+```go
+// pkg/database/tx.go
+func WithTx(ctx context.Context, pool *pgxpool.Pool, fn func(ctx context.Context) error) error
+```
+
+- If a `pgx.Tx` is already active in `ctx` (nested call), `fn` is called within the existing transaction (safe nesting).
+- If no transaction is active, a new one is started, committed on success, or rolled back on any error/panic.
+- Repositories detect the transaction via `TxFromContext(ctx)` and scope their `sqlc` queries accordingly.
+
+### Invariant guaranteed by `WithTx`
+> **Document state + audit log + outbox event are either all committed or all rolled back.** There is no partial write scenario.

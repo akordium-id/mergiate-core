@@ -216,58 +216,75 @@ func (u *usecase) CreateDocument(ctx context.Context, cmd CreateDocumentCommand)
 		UpdatedAt:      now,
 	}
 
-	if err := u.docRepo.CreateDocument(ctx, doc); err != nil {
-		return nil, err
-	}
-
-	if len(lines) > 0 {
-		if err := u.docRepo.CreateLines(ctx, lines); err != nil {
-			return nil, err
+	err = u.docRepo.WithTx(ctx, func(txCtx context.Context) error {
+		if err := u.docRepo.CreateDocument(txCtx, doc); err != nil {
+			return err
 		}
-	}
 
-	// Transactional Outbox Event
-	if u.outboxRepo != nil {
-		outboxID, _ := shared.NewID()
-		_ = u.outboxRepo.Create(ctx, &event.OutboxEvent{
-			ID:            outboxID,
-			TenantID:      tenantID,
-			EventType:     "document.created",
-			AggregateType: "document",
-			AggregateID:   docID,
-			Payload: map[string]any{
-				"document_id":     docID.String(),
-				"document_number": docNum,
-				"document_type":   string(docType),
-				"status":          string(doc.Status),
-				"total_amount":    total.Amount(),
-				"currency":        total.Currency(),
-			},
-			Status:    event.OutboxStatusPending,
-			CreatedAt: now,
-		})
-	}
+		if len(lines) > 0 {
+			if err := u.docRepo.CreateLines(txCtx, lines); err != nil {
+				return err
+			}
+		}
 
-	// Append-only Audit Log
-	if u.auditRepo != nil {
-		auditID, _ := shared.NewID()
-		_ = u.auditRepo.Create(ctx, &audit.AuditLog{
-			ID:         auditID,
-			TenantID:   tenantID,
-			ActorID:    cmd.CreatedBy,
-			ActorType:  audit.ActorTypeUser,
-			Action:     audit.ActionCreate,
-			EntityType: "document",
-			EntityID:   docID,
-			Changes: map[string]any{
-				"document_number": docNum,
-				"document_type":   string(docType),
-				"status":          string(doc.Status),
-				"total_amount":    total.Amount(),
-				"currency":        total.Currency(),
-			},
-			CreatedAt: now,
-		})
+		// Transactional Outbox Event
+		if u.outboxRepo != nil {
+			outboxID, err := shared.NewID()
+			if err != nil {
+				return err
+			}
+			if err := u.outboxRepo.Create(txCtx, &event.OutboxEvent{
+				ID:            outboxID,
+				TenantID:      tenantID,
+				EventType:     "document.created",
+				AggregateType: "document",
+				AggregateID:   docID,
+				Payload: map[string]any{
+					"document_id":     docID.String(),
+					"document_number": docNum,
+					"document_type":   string(docType),
+					"status":          string(doc.Status),
+					"total_amount":    total.Amount(),
+					"currency":        total.Currency(),
+				},
+				Status:    event.OutboxStatusPending,
+				CreatedAt: now,
+			}); err != nil {
+				return fmt.Errorf("outbox write: %w", err)
+			}
+		}
+
+		// Append-only Audit Log
+		if u.auditRepo != nil {
+			auditID, err := shared.NewID()
+			if err != nil {
+				return err
+			}
+			if err := u.auditRepo.Create(txCtx, &audit.AuditLog{
+				ID:         auditID,
+				TenantID:   tenantID,
+				ActorID:    cmd.CreatedBy,
+				ActorType:  audit.ActorTypeUser,
+				Action:     audit.ActionCreate,
+				EntityType: "document",
+				EntityID:   docID,
+				Changes: map[string]any{
+					"document_number": docNum,
+					"document_type":   string(docType),
+					"status":          string(doc.Status),
+					"total_amount":    total.Amount(),
+					"currency":        total.Currency(),
+				},
+				CreatedAt: now,
+			}); err != nil {
+				return fmt.Errorf("audit write: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return doc, nil
@@ -339,15 +356,12 @@ func (u *usecase) TransitionDocument(ctx context.Context, cmd TransitionDocument
 		return nil, err
 	}
 
-	if err := u.docRepo.UpdateDocumentStatus(ctx, tenantID, cmd.DocumentID, cmd.TargetStatus); err != nil {
-		return nil, err
-	}
-
 	transID, err := shared.NewID()
 	if err != nil {
 		return nil, err
 	}
 
+	now := time.Now().UTC()
 	trans := &document.DocumentTransition{
 		ID:         transID,
 		TenantID:   tenantID,
@@ -356,53 +370,74 @@ func (u *usecase) TransitionDocument(ctx context.Context, cmd TransitionDocument
 		ToStatus:   cmd.TargetStatus,
 		Reason:     strings.TrimSpace(cmd.Reason),
 		ActorID:    cmd.ActorID,
-		CreatedAt:  time.Now().UTC(),
+		CreatedAt:  now,
 	}
 
-	if err := u.docRepo.RecordTransition(ctx, trans); err != nil {
+	err = u.docRepo.WithTx(ctx, func(txCtx context.Context) error {
+		if err := u.docRepo.UpdateDocumentStatus(txCtx, tenantID, cmd.DocumentID, cmd.TargetStatus); err != nil {
+			return err
+		}
+
+		if err := u.docRepo.RecordTransition(txCtx, trans); err != nil {
+			return err
+		}
+
+		// Transactional Outbox Event
+		if u.outboxRepo != nil {
+			outboxID, err := shared.NewID()
+			if err != nil {
+				return err
+			}
+			if err := u.outboxRepo.Create(txCtx, &event.OutboxEvent{
+				ID:            outboxID,
+				TenantID:      tenantID,
+				EventType:     "document.transitioned",
+				AggregateType: "document",
+				AggregateID:   cmd.DocumentID,
+				Payload: map[string]any{
+					"document_id":     cmd.DocumentID.String(),
+					"document_number": doc.DocumentNumber,
+					"document_type":   string(doc.DocumentType),
+					"from_status":     string(doc.Status),
+					"to_status":       string(cmd.TargetStatus),
+					"reason":          cmd.Reason,
+				},
+				Status:    event.OutboxStatusPending,
+				CreatedAt: now,
+			}); err != nil {
+				return fmt.Errorf("outbox write: %w", err)
+			}
+		}
+
+		// Append-only Audit Log
+		if u.auditRepo != nil {
+			auditID, err := shared.NewID()
+			if err != nil {
+				return err
+			}
+			if err := u.auditRepo.Create(txCtx, &audit.AuditLog{
+				ID:         auditID,
+				TenantID:   tenantID,
+				ActorID:    cmd.ActorID,
+				ActorType:  audit.ActorTypeUser,
+				Action:     audit.ActionTransition,
+				EntityType: "document",
+				EntityID:   cmd.DocumentID,
+				Changes: map[string]any{
+					"from_status": string(doc.Status),
+					"to_status":   string(cmd.TargetStatus),
+					"reason":      cmd.Reason,
+				},
+				CreatedAt: now,
+			}); err != nil {
+				return fmt.Errorf("audit write: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-
-	// Transactional Outbox Event
-	if u.outboxRepo != nil {
-		outboxID, _ := shared.NewID()
-		_ = u.outboxRepo.Create(ctx, &event.OutboxEvent{
-			ID:            outboxID,
-			TenantID:      tenantID,
-			EventType:     "document.transitioned",
-			AggregateType: "document",
-			AggregateID:   cmd.DocumentID,
-			Payload: map[string]any{
-				"document_id":     cmd.DocumentID.String(),
-				"document_number": doc.DocumentNumber,
-				"document_type":   string(doc.DocumentType),
-				"from_status":     string(doc.Status),
-				"to_status":       string(cmd.TargetStatus),
-				"reason":          cmd.Reason,
-			},
-			Status:    event.OutboxStatusPending,
-			CreatedAt: trans.CreatedAt,
-		})
-	}
-
-	// Append-only Audit Log
-	if u.auditRepo != nil {
-		auditID, _ := shared.NewID()
-		_ = u.auditRepo.Create(ctx, &audit.AuditLog{
-			ID:         auditID,
-			TenantID:   tenantID,
-			ActorID:    cmd.ActorID,
-			ActorType:  audit.ActorTypeUser,
-			Action:     audit.ActionTransition,
-			EntityType: "document",
-			EntityID:   cmd.DocumentID,
-			Changes: map[string]any{
-				"from_status": string(doc.Status),
-				"to_status":   string(cmd.TargetStatus),
-				"reason":      cmd.Reason,
-			},
-			CreatedAt: trans.CreatedAt,
-		})
 	}
 
 	// Refresh document state

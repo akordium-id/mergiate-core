@@ -108,6 +108,10 @@ func (m *mockDocRepo) ListTransitions(ctx context.Context, tenantID, documentID 
 	return m.transitions[documentID.String()], nil
 }
 
+func (m *mockDocRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
 func TestDocumentUsecase_CreateDocumentWithLines(t *testing.T) {
 	repo := newMockDocRepo()
 	uc := usecasedoc.NewUsecase(repo, nil, nil)

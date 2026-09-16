@@ -29,6 +29,7 @@ func NewCustomFieldHandler(usecase cfusecase.Usecase, tokenMgr auth.TokenManager
 func (h *CustomFieldHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/custom-fields", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
+		r.Use(middleware.RequirePermission("custom_field:manage"))
 
 		// Definitions management
 		r.Route("/definitions", func(r chi.Router) {
@@ -46,6 +47,7 @@ func (h *CustomFieldHandler) RegisterRoutes(r chi.Router) {
 		})
 	})
 }
+
 
 // ----------------------------------------------------------------------------
 // Definitions Handlers

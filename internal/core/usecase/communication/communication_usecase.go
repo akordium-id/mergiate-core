@@ -115,6 +115,7 @@ func (u *usecase) CreateComment(ctx context.Context, cmd CreateCommentCommand) (
 		allMentions = append(allMentions, m)
 	}
 
+	now := time.Now().UTC()
 	comment := &communication.Comment{
 		ID:         commentID,
 		TenantID:   cmd.TenantID,
@@ -127,56 +128,98 @@ func (u *usecase) CreateComment(ctx context.Context, cmd CreateCommentCommand) (
 		ParentID:   cmd.ParentID,
 		IsPinned:   cmd.IsPinned,
 		Metadata:   cmd.Metadata,
-		CreatedAt:  time.Now().UTC(),
-		UpdatedAt:  time.Now().UTC(),
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 
-	if err := u.commRepo.CreateComment(ctx, comment); err != nil {
+	err = u.commRepo.WithTx(ctx, func(txCtx context.Context) error {
+		if err := u.commRepo.CreateComment(txCtx, comment); err != nil {
+			return err
+		}
+
+		// Dispatch In-App Notifications to mentioned users (excluding author)
+		for _, mentionedUserID := range allMentions {
+			if mentionedUserID == cmd.AuthorID {
+				continue
+			}
+			notifID, err := shared.NewID()
+			if err != nil {
+				return err
+			}
+			notif := &communication.Notification{
+				ID:         notifID,
+				TenantID:   cmd.TenantID,
+				UserID:     mentionedUserID,
+				ActorID:    &cmd.AuthorID,
+				Type:       communication.NotificationTypeMention,
+				Title:      fmt.Sprintf("Mentioned in %s", cmd.EntityType),
+				Message:    content,
+				EntityType: cmd.EntityType,
+				EntityID:   &cmd.EntityID,
+				IsRead:     false,
+				CreatedAt:  now,
+			}
+			if err := u.commRepo.CreateNotification(txCtx, notif); err != nil {
+				return fmt.Errorf("create notification: %w", err)
+			}
+		}
+
+		// Emit Event to Outbox if repository is present
+		if u.outboxRepo != nil {
+			evtID, err := shared.NewID()
+			if err != nil {
+				return err
+			}
+			outboxEvent := &event.OutboxEvent{
+				ID:            evtID,
+				TenantID:      cmd.TenantID,
+				EventType:     "comment.created",
+				AggregateType: cmd.EntityType,
+				AggregateID:   cmd.EntityID,
+				Payload: map[string]any{
+					"comment_id": comment.ID.String(),
+					"author_id":  comment.AuthorID.String(),
+					"type":       string(comment.Type),
+					"mentions":   allMentions,
+				},
+				Status:     event.OutboxStatusPending,
+				RetryCount: 0,
+				CreatedAt:  now,
+			}
+			if err := u.outboxRepo.Create(txCtx, outboxEvent); err != nil {
+				return fmt.Errorf("outbox write: %w", err)
+			}
+		}
+
+		// Append-only Audit Log
+		if u.auditRepo != nil {
+			auditID, err := shared.NewID()
+			if err != nil {
+				return err
+			}
+			if err := u.auditRepo.Create(txCtx, &audit.AuditLog{
+				ID:         auditID,
+				TenantID:   cmd.TenantID,
+				ActorID:    &cmd.AuthorID,
+				ActorType:  audit.ActorTypeUser,
+				Action:     audit.ActionCreate,
+				EntityType: "comment",
+				EntityID:   comment.ID,
+				Changes: map[string]any{
+					"content":     comment.Content,
+					"entity_type": comment.EntityType,
+					"entity_id":   comment.EntityID.String(),
+				},
+				CreatedAt: now,
+			}); err != nil {
+				return fmt.Errorf("audit write: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-
-	// Dispatch In-App Notifications to mentioned users (excluding author)
-	for _, mentionedUserID := range allMentions {
-		if mentionedUserID == cmd.AuthorID {
-			continue
-		}
-		notifID, _ := shared.NewID()
-		notif := &communication.Notification{
-			ID:         notifID,
-			TenantID:   cmd.TenantID,
-			UserID:     mentionedUserID,
-			ActorID:    &cmd.AuthorID,
-			Type:       communication.NotificationTypeMention,
-			Title:      fmt.Sprintf("Mentioned in %s", cmd.EntityType),
-			Message:    content,
-			EntityType: cmd.EntityType,
-			EntityID:   &cmd.EntityID,
-			IsRead:     false,
-			CreatedAt:  time.Now().UTC(),
-		}
-		_ = u.commRepo.CreateNotification(ctx, notif)
-	}
-
-	// Emit Event to Outbox if repository is present
-	if u.outboxRepo != nil {
-		evtID, _ := shared.NewID()
-		outboxEvent := &event.OutboxEvent{
-			ID:            evtID,
-			TenantID:      cmd.TenantID,
-			EventType:     "comment.created",
-			AggregateType: cmd.EntityType,
-			AggregateID:   cmd.EntityID,
-			Payload: map[string]any{
-				"comment_id": comment.ID,
-				"author_id":  comment.AuthorID,
-				"type":       comment.Type,
-				"mentions":   allMentions,
-			},
-			Status:     event.OutboxStatusPending,
-			RetryCount: 0,
-			CreatedAt:  time.Now().UTC(),
-		}
-		_ = u.outboxRepo.Create(ctx, outboxEvent)
 	}
 
 	return comment, nil

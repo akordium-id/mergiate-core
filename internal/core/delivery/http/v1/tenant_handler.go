@@ -7,28 +7,42 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/akordium-id/mergiate-core/internal/core/delivery/http/middleware"
 	"github.com/akordium-id/mergiate-core/internal/core/domain/shared"
 	"github.com/akordium-id/mergiate-core/internal/core/usecase/tenant"
+	"github.com/akordium-id/mergiate-core/pkg/auth"
 	"github.com/akordium-id/mergiate-core/pkg/response"
 )
 
 type TenantHandler struct {
-	usecase tenant.Usecase
+	usecase  tenant.Usecase
+	tokenMgr auth.TokenManager
 }
 
-func NewTenantHandler(usecase tenant.Usecase) *TenantHandler {
-	return &TenantHandler{usecase: usecase}
+func NewTenantHandler(usecase tenant.Usecase, tokenMgr ...auth.TokenManager) *TenantHandler {
+	h := &TenantHandler{usecase: usecase}
+	if len(tokenMgr) > 0 {
+		h.tokenMgr = tokenMgr[0]
+	}
+	return h
 }
 
 func (h *TenantHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/tenants", func(r chi.Router) {
-		r.Post("/", h.Create)
+		// Write operations: require tenant:manage permission.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("tenant:manage"))
+			r.Post("/", h.Create)
+			r.Put("/{id}", h.Update)
+		})
+
+		// Read operations: any authenticated user may read tenant info.
 		r.Get("/", h.List)
 		r.Get("/{id}", h.GetByID)
 		r.Get("/code/{code}", h.GetByCode)
-		r.Put("/{id}", h.Update)
 	})
 }
+
 
 func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var cmd tenant.CreateTenantCommand

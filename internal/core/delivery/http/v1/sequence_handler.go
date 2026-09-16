@@ -28,6 +28,7 @@ func NewSequenceHandler(usecase sequsecase.Usecase, tokenMgr auth.TokenManager) 
 func (h *SequenceHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/sequences", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
+		r.Use(middleware.RequirePermission("sequence:manage"))
 
 		r.Get("/", h.List)
 		r.Post("/", h.Create)
@@ -39,6 +40,7 @@ func (h *SequenceHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/preview", h.Preview)
 	})
 }
+
 
 func (h *SequenceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := shared.RequireTenantID(r.Context())

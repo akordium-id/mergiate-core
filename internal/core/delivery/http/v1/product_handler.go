@@ -27,28 +27,45 @@ func (h *ProductHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/units", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
 
-		r.Post("/", h.CreateUnit)
-		r.Get("/", h.ListUnits)
-		r.Get("/{id}", h.GetUnitByID)
-		r.Post("/conversions", h.CreateConversion)
-		r.Post("/convert", h.ConvertQuantity)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("product:read"))
+			r.Get("/", h.ListUnits)
+			r.Get("/{id}", h.GetUnitByID)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("product:create"))
+			r.Post("/", h.CreateUnit)
+			r.Post("/conversions", h.CreateConversion)
+			r.Post("/convert", h.ConvertQuantity)
+		})
 	})
 
 	// Products routes
 	r.Route("/products", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
 
-		r.Post("/", h.CreateProduct)
-		r.Get("/", h.ListProducts)
-		r.Get("/{id}", h.GetProductByID)
-		r.Put("/{id}", h.UpdateProduct)
-
-		// Variants subroutes
-		r.Post("/{id}/variants", h.CreateVariant)
-		r.Get("/{id}/variants", h.ListVariants)
-		r.Delete("/variants/{variant_id}", h.DeleteVariant)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("product:read"))
+			r.Get("/", h.ListProducts)
+			r.Get("/{id}", h.GetProductByID)
+			r.Get("/{id}/variants", h.ListVariants)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("product:create"))
+			r.Post("/", h.CreateProduct)
+			r.Post("/{id}/variants", h.CreateVariant)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("product:update"))
+			r.Put("/{id}", h.UpdateProduct)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("product:delete"))
+			r.Delete("/variants/{variant_id}", h.DeleteVariant)
+		})
 	})
 }
+
 
 // ----------------------------------------------------------------------------
 // Unit Handlers

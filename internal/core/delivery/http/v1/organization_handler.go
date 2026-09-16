@@ -24,13 +24,23 @@ func (h *OrganizationHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/organizations", func(r chi.Router) {
 		r.Use(middleware.TenantRequired())
 
-		r.Post("/", h.Create)
-		r.Get("/", h.List)
-		r.Get("/tree", h.GetTree)
-		r.Get("/{id}", h.GetByID)
-		r.Put("/{id}", h.Update)
+		// Write operations
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("organization:manage"))
+			r.Post("/", h.Create)
+			r.Put("/{id}", h.Update)
+		})
+
+		// Read operations
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("organization:read"))
+			r.Get("/", h.List)
+			r.Get("/tree", h.GetTree)
+			r.Get("/{id}", h.GetByID)
+		})
 	})
 }
+
 
 func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var cmd organization.CreateCommand

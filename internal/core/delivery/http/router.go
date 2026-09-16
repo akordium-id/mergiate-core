@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +36,10 @@ type Handlers struct {
 	ModuleRegistry        *module.Registry
 	TokenManager          auth.TokenManager
 	ApiKeyValidator       identity.APIKeyValidator
+	// CORSAllowedOrigins is the list of allowed origins for CORS.
+	// Empty slice = no cross-origin access (same-origin / reverse-proxy deployments).
+	// Wildcard "*" is NOT accepted when credentials are in use — pass explicit origins only.
+	CORSAllowedOrigins []string
 }
 
 // NewRouter constructs the Chi router with middleware and routes.
@@ -46,16 +51,30 @@ func NewRouter(db *pgxpool.Pool, handlers Handlers) http.Handler {
 	r.Use(chimiddleware.ClientIPFromHeader("X-Real-IP"))
 	r.Use(middleware.RequestLogger())
 	r.Use(chimiddleware.Recoverer)
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-API-Key", middleware.HeaderTenantID},
-		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
 
-	// Health Checks
+	// CORS — never combine wildcard origins with AllowCredentials (invalid per spec).
+	// Wildcard entries are filtered out to prevent misconfiguration.
+	safeOrigins := filterWildcardOrigins(handlers.CORSAllowedOrigins)
+	if len(safeOrigins) > 0 {
+		r.Use(cors.Handler(cors.Options{
+			AllowedOrigins:   safeOrigins,
+			AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-API-Key", middleware.HeaderTenantID},
+			ExposedHeaders:   []string{"Link"},
+			AllowCredentials: true,
+			MaxAge:           300,
+		}))
+	} else {
+		// No explicit origins: allow no cross-origin access.
+		r.Use(cors.Handler(cors.Options{
+			AllowedOrigins:   []string{},
+			AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-API-Key", middleware.HeaderTenantID},
+			AllowCredentials: false,
+		}))
+	}
+
+	// Health Checks (no auth)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		response.JSON(w, http.StatusOK, map[string]string{
 			"status": "ok",
@@ -79,40 +98,60 @@ func NewRouter(db *pgxpool.Pool, handlers Handlers) http.Handler {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		if handlers.TokenManager != nil {
-			r.Use(middleware.AuthOptional(handlers.TokenManager, handlers.ApiKeyValidator))
-		}
+		// Public auth routes (register, login) — no auth required.
+		// /auth/me and /auth/switch-tenant are protected inside AuthHandler.
 		if handlers.AuthHandler != nil {
 			handlers.AuthHandler.RegisterRoutes(r)
 		}
-		if handlers.IdentityHandler != nil {
-			handlers.IdentityHandler.RegisterRoutes(r)
-		}
-		if handlers.CustomFieldHandler != nil {
-			handlers.CustomFieldHandler.RegisterRoutes(r)
-		}
-		if handlers.SequenceHandler != nil {
-			handlers.SequenceHandler.RegisterRoutes(r)
-		}
-		if handlers.AttachmentHandler != nil {
-			handlers.AttachmentHandler.RegisterRoutes(r)
-		}
-		if handlers.CommunicationHandler != nil {
-			handlers.CommunicationHandler.RegisterRoutes(r)
-		}
-		if handlers.ServiceAccountHandler != nil {
-			handlers.ServiceAccountHandler.RegisterRoutes(r)
-		}
-		if handlers.ModuleRegistry != nil {
-			handlers.ModuleRegistry.MountRoutes(r)
-		}
-		handlers.TenantHandler.RegisterRoutes(r)
-		handlers.OrganizationHandler.RegisterRoutes(r)
-		handlers.PartyHandler.RegisterRoutes(r)
-		handlers.ProductHandler.RegisterRoutes(r)
-		handlers.DocumentHandler.RegisterRoutes(r)
-		handlers.AuditHandler.RegisterRoutes(r)
+
+		// All remaining routes require authentication.
+		r.Group(func(r chi.Router) {
+			if handlers.TokenManager != nil {
+				r.Use(middleware.AuthRequired(handlers.TokenManager, handlers.ApiKeyValidator))
+			}
+
+			if handlers.IdentityHandler != nil {
+				handlers.IdentityHandler.RegisterRoutes(r)
+			}
+			if handlers.CustomFieldHandler != nil {
+				handlers.CustomFieldHandler.RegisterRoutes(r)
+			}
+			if handlers.SequenceHandler != nil {
+				handlers.SequenceHandler.RegisterRoutes(r)
+			}
+			if handlers.AttachmentHandler != nil {
+				handlers.AttachmentHandler.RegisterRoutes(r)
+			}
+			if handlers.CommunicationHandler != nil {
+				handlers.CommunicationHandler.RegisterRoutes(r)
+			}
+			if handlers.ServiceAccountHandler != nil {
+				handlers.ServiceAccountHandler.RegisterRoutes(r)
+			}
+			if handlers.ModuleRegistry != nil {
+				// Module routes are also behind AuthRequired.
+				handlers.ModuleRegistry.MountRoutes(r)
+			}
+			handlers.TenantHandler.RegisterRoutes(r)
+			handlers.OrganizationHandler.RegisterRoutes(r)
+			handlers.PartyHandler.RegisterRoutes(r)
+			handlers.ProductHandler.RegisterRoutes(r)
+			handlers.DocumentHandler.RegisterRoutes(r)
+			handlers.AuditHandler.RegisterRoutes(r)
+		})
 	})
 
 	return r
+}
+
+// filterWildcardOrigins removes wildcard "*" entries from the origins list to prevent
+// combining AllowCredentials with a wildcard origin (invalid per CORS spec).
+func filterWildcardOrigins(origins []string) []string {
+	filtered := make([]string, 0, len(origins))
+	for _, o := range origins {
+		if strings.TrimSpace(o) != "*" {
+			filtered = append(filtered, o)
+		}
+	}
+	return filtered
 }

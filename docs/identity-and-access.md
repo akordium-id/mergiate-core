@@ -81,6 +81,8 @@ erDiagram
 
 ### Pre-Seeded System Permissions Catalog
 
+> **Updated**: ERP Dogfood Refactor (Sep 2026) — added `organization`, `tenant`, `attachment`, `sequence`, `custom-field`, `communication` categories.
+
 | Permission Code | Category | Description |
 |---|---|---|
 | `iam:manage` | `iam` | Manage users, members, and roles |
@@ -97,21 +99,61 @@ erDiagram
 | `product:read` | `product` | Browse catalog products |
 | `product:update` | `product` | Update products and pricing |
 | `audit:read` | `audit` | Inspect immutable audit log trail |
+| `organization:create` | `organization` | Create organizations |
+| `organization:read` | `organization` | View organizations |
+| `organization:update` | `organization` | Edit organization profiles |
+| `organization:delete` | `organization` | Remove organizations |
+| `tenant:manage` | `tenant` | Manage tenant settings and configuration |
+| `attachment:upload` | `attachment` | Upload file attachments |
+| `attachment:read` | `attachment` | View and download attachments |
+| `attachment:delete` | `attachment` | Delete attachments |
+| `sequence:manage` | `sequence` | Configure document number sequences |
+| `custom-field:manage` | `custom-field` | Define and manage custom field schemas |
+| `communication:create` | `communication` | Create comments and notifications |
+| `communication:read` | `communication` | Read comments and notification history |
+
+### Permission Matrix by Role
+
+| Permission | `super-admin` (`*`) | `admin` | `manager` | `staff` | `viewer` |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `iam:manage` | ✅ | ✅ | — | — | — |
+| `document:*` | ✅ | ✅ | ✅ | create/read/update | read |
+| `party:*` | ✅ | ✅ | ✅ | create/read | read |
+| `product:*` | ✅ | ✅ | ✅ | read | read |
+| `organization:*` | ✅ | ✅ | read | read | — |
+| `tenant:manage` | ✅ | ✅ | — | — | — |
+| `audit:read` | ✅ | ✅ | ✅ | — | — |
+| `attachment:*` | ✅ | ✅ | ✅ | upload/read | read |
+| `communication:*` | ✅ | ✅ | ✅ | ✅ | read |
 
 ---
 
 ## 3. Authentication & Authorization Middleware
 
+> **Updated**: ERP Dogfood Refactor (Sep 2026) — AuthRequired is now applied globally; no endpoint is unauthenticated by default.
+
 ### `middleware.AuthRequired(tokenManager)`
 - Extracts `Bearer <token>` from the `Authorization` header.
 - Validates HMAC signature and token expiration.
-- Injects `shared.AuthClaims` and `shared.TenantID` into request `context.Context`.
+- **Production enforcement**: Server panics at startup if `JWT_SECRET` is not set or is the default development placeholder.
+- Injects `sdk.AuthClaims` and `sdk.TenantID` into request `context.Context`.
 - If missing or invalid, returns `HTTP 401 Unauthorized`.
+- **Applied globally** on all `/api/v1/...` routes. There are no unauthenticated business endpoints.
 
 ### `middleware.RequirePermission(code)`
 - Checks whether the user's active token claims contains the specified permission code.
 - Supports wildcard `*` permissions (super-admin bypass).
 - If absent, returns `HTTP 403 Forbidden`.
+- Applied per-handler for fine-grained resource access control.
+
+### `middleware.TenantRequired()`
+- Validates the `X-Tenant-ID` header is present and parses as a valid UUID.
+- **Cross-tenant isolation**: If the JWT's `tid` claim does not match the `X-Tenant-ID` header, returns `HTTP 403 TENANT_MISMATCH`. This prevents horizontal privilege escalation across tenants.
+- Injects the validated tenant ID into `context.Context` for downstream use.
+
+### CORS Policy
+- Allowed origins are configured via `config.CORSAllowedOrigins` (no wildcard when `credentials: true`).
+- Credentials mode (`withCredentials`) requires an explicit allowlist — using `*` with credentials is rejected by browsers and is enforced by the CORS middleware.
 
 ---
 

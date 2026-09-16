@@ -112,6 +112,10 @@ func (m *mockCommRepo) CountUnreadNotifications(ctx context.Context, tenantID, u
 	return count, nil
 }
 
+func (m *mockCommRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
 type mockAuditRepo struct {
 	logs []audit.AuditLog
 }

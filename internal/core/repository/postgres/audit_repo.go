@@ -10,6 +10,7 @@ import (
 	"github.com/akordium-id/mergiate-core/internal/core/domain/audit"
 	"github.com/akordium-id/mergiate-core/internal/core/domain/shared"
 	"github.com/akordium-id/mergiate-core/internal/core/repository/postgres/sqlc"
+	"github.com/akordium-id/mergiate-core/pkg/database"
 )
 
 type auditRepository struct {
@@ -23,6 +24,13 @@ func NewAuditRepository(pool *pgxpool.Pool) audit.Repository {
 		pool:    pool,
 		queries: sqlc.New(pool),
 	}
+}
+
+func (r *auditRepository) q(ctx context.Context) *sqlc.Queries {
+	if tx := database.TxFromContext(ctx); tx != nil {
+		return r.queries.WithTx(tx)
+	}
+	return r.queries
 }
 
 func (r *auditRepository) Create(ctx context.Context, a *audit.AuditLog) error {
@@ -47,7 +55,7 @@ func (r *auditRepository) Create(ctx context.Context, a *audit.AuditLog) error {
 		CreatedAt:  pgtype.Timestamptz{Time: a.CreatedAt, Valid: true},
 	}
 
-	row, err := r.queries.CreateAuditLog(ctx, params)
+	row, err := r.q(ctx).CreateAuditLog(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -80,7 +88,7 @@ func (r *auditRepository) List(ctx context.Context, tenantID shared.ID, filter a
 		actionStr = &s
 	}
 
-	total, err := r.queries.CountAuditLogs(ctx, sqlc.CountAuditLogsParams{
+	total, err := r.q(ctx).CountAuditLogs(ctx, sqlc.CountAuditLogsParams{
 		TenantID:   shared.ToPgUUID(tenantID),
 		EntityType: filter.EntityType,
 		EntityID:   entityID,
@@ -91,7 +99,7 @@ func (r *auditRepository) List(ctx context.Context, tenantID shared.ID, filter a
 		return nil, 0, err
 	}
 
-	rows, err := r.queries.ListAuditLogs(ctx, sqlc.ListAuditLogsParams{
+	rows, err := r.q(ctx).ListAuditLogs(ctx, sqlc.ListAuditLogsParams{
 		TenantID:   shared.ToPgUUID(tenantID),
 		Limit:      limit,
 		Offset:     offset,

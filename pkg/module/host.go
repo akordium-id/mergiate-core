@@ -8,20 +8,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/akordium-id/mergiate-core/internal/core/domain/event"
-	"github.com/akordium-id/mergiate-core/internal/core/domain/shared"
 	"github.com/akordium-id/mergiate-core/pkg/auth"
 	"github.com/akordium-id/mergiate-core/pkg/eventbus"
+	"github.com/akordium-id/mergiate-core/pkg/sdk"
 	"github.com/akordium-id/mergiate-core/pkg/storage"
 )
 
 // Host exposes platform services and capabilities to external modules.
+// All types in this interface are from public packages (pkg/sdk, pkg/auth, etc.)
+// so external Go modules can compile against this interface without importing internal/.
 type Host interface {
 	DB() *pgxpool.Pool
 	EventBus() eventbus.Bus
 	Storage() storage.Driver
 	TokenManager() auth.TokenManager
 	Logger() *slog.Logger
-	RecordOutbox(ctx context.Context, tenantID shared.ID, eventType, aggregateType string, aggregateID shared.ID, payload map[string]any) error
+	// RecordOutbox creates an outbox event for the given tenant and aggregate.
+	// Uses sdk.ID so external modules can call this without importing internal types.
+	RecordOutbox(ctx context.Context, tenantID sdk.ID, eventType, aggregateType string, aggregateID sdk.ID, payload map[string]any) error
 }
 
 type hostImpl struct {
@@ -29,7 +33,7 @@ type hostImpl struct {
 	bus        eventbus.Bus
 	storage    storage.Driver
 	tokenMgr   auth.TokenManager
-	outboxRepo event.OutboxRepository
+	outboxRepo event.OutboxRepository // internal — not part of the public Host interface
 	logger     *slog.Logger
 }
 
@@ -62,11 +66,11 @@ func (h *hostImpl) Storage() storage.Driver         { return h.storage }
 func (h *hostImpl) TokenManager() auth.TokenManager { return h.tokenMgr }
 func (h *hostImpl) Logger() *slog.Logger            { return h.logger }
 
-func (h *hostImpl) RecordOutbox(ctx context.Context, tenantID shared.ID, eventType, aggregateType string, aggregateID shared.ID, payload map[string]any) error {
+func (h *hostImpl) RecordOutbox(ctx context.Context, tenantID sdk.ID, eventType, aggregateType string, aggregateID sdk.ID, payload map[string]any) error {
 	if h.outboxRepo == nil {
 		return nil
 	}
-	evtID, err := shared.NewID()
+	evtID, err := sdk.NewID()
 	if err != nil {
 		return err
 	}

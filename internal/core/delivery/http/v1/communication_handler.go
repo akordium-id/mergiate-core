@@ -30,16 +30,26 @@ func NewCommunicationHandler(usecase commusecase.Usecase, tokenMgr auth.TokenMan
 func (h *CommunicationHandler) RegisterRoutes(r chi.Router) {
 	// Comments endpoints
 	r.Route("/comments", func(r chi.Router) {
-		r.Use(middleware.TenantRequired(), middleware.AuthOptional(h.tokenMgr))
+		r.Use(middleware.TenantRequired())
 
-		r.Post("/", h.CreateComment)
-		r.Get("/{entityType}/{entityId}", h.ListEntityComments)
-		r.Delete("/{id}", h.DeleteComment)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("comment:read"))
+			r.Get("/{entityType}/{entityId}", h.ListEntityComments)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("comment:create"))
+			r.Post("/", h.CreateComment)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequirePermission("comment:delete"))
+			r.Delete("/{id}", h.DeleteComment)
+		})
 	})
 
 	// Notifications endpoints
 	r.Route("/notifications", func(r chi.Router) {
-		r.Use(middleware.TenantRequired(), middleware.AuthOptional(h.tokenMgr))
+		r.Use(middleware.TenantRequired())
+		r.Use(middleware.RequirePermission("notification:read"))
 
 		r.Get("/", h.ListNotifications)
 		r.Post("/{id}/read", h.MarkRead)
@@ -48,11 +58,13 @@ func (h *CommunicationHandler) RegisterRoutes(r chi.Router) {
 
 	// Unified Activity Timeline endpoint
 	r.Route("/activities", func(r chi.Router) {
-		r.Use(middleware.TenantRequired(), middleware.AuthOptional(h.tokenMgr))
+		r.Use(middleware.TenantRequired())
+		r.Use(middleware.RequirePermission("comment:read"))
 
 		r.Get("/{entityType}/{entityId}", h.GetActivityTimeline)
 	})
 }
+
 
 func (h *CommunicationHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := shared.RequireTenantID(r.Context())

@@ -13,6 +13,7 @@ import (
 	"github.com/akordium-id/mergiate-core/internal/core/domain/communication"
 	"github.com/akordium-id/mergiate-core/internal/core/domain/shared"
 	"github.com/akordium-id/mergiate-core/internal/core/repository/postgres/sqlc"
+	"github.com/akordium-id/mergiate-core/pkg/database"
 )
 
 type communicationRepository struct {
@@ -26,6 +27,17 @@ func NewCommunicationRepository(pool *pgxpool.Pool) communication.Repository {
 		pool:    pool,
 		queries: sqlc.New(pool),
 	}
+}
+
+func (r *communicationRepository) q(ctx context.Context) *sqlc.Queries {
+	if tx := database.TxFromContext(ctx); tx != nil {
+		return r.queries.WithTx(tx)
+	}
+	return r.queries
+}
+
+func (r *communicationRepository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return database.WithTx(ctx, r.pool, fn)
 }
 
 func (r *communicationRepository) CreateComment(ctx context.Context, c *communication.Comment) error {
@@ -44,7 +56,7 @@ func (r *communicationRepository) CreateComment(ctx context.Context, c *communic
 		parentID = shared.ToPgUUID(*c.ParentID)
 	}
 
-	row, err := r.queries.CreateComment(ctx, sqlc.CreateCommentParams{
+	row, err := r.q(ctx).CreateComment(ctx, sqlc.CreateCommentParams{
 		ID:         shared.ToPgUUID(c.ID),
 		TenantID:   shared.ToPgUUID(c.TenantID),
 		EntityType: c.EntityType,
@@ -67,7 +79,7 @@ func (r *communicationRepository) CreateComment(ctx context.Context, c *communic
 }
 
 func (r *communicationRepository) GetCommentByID(ctx context.Context, tenantID, id shared.ID) (*communication.Comment, error) {
-	row, err := r.queries.GetCommentByID(ctx, sqlc.GetCommentByIDParams{
+	row, err := r.q(ctx).GetCommentByID(ctx, sqlc.GetCommentByIDParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		ID:       shared.ToPgUUID(id),
 	})
@@ -112,7 +124,7 @@ func (r *communicationRepository) GetCommentByID(ctx context.Context, tenantID, 
 }
 
 func (r *communicationRepository) ListCommentsByEntity(ctx context.Context, tenantID shared.ID, entityType string, entityID shared.ID) ([]communication.CommentWithAuthor, error) {
-	rows, err := r.queries.ListCommentsByEntity(ctx, sqlc.ListCommentsByEntityParams{
+	rows, err := r.q(ctx).ListCommentsByEntity(ctx, sqlc.ListCommentsByEntityParams{
 		TenantID:   shared.ToPgUUID(tenantID),
 		EntityType: entityType,
 		EntityID:   shared.ToPgUUID(entityID),
@@ -164,7 +176,7 @@ func (r *communicationRepository) ListCommentsByEntity(ctx context.Context, tena
 }
 
 func (r *communicationRepository) DeleteComment(ctx context.Context, tenantID, id shared.ID) error {
-	return r.queries.DeleteComment(ctx, sqlc.DeleteCommentParams{
+	return r.q(ctx).DeleteComment(ctx, sqlc.DeleteCommentParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		ID:       shared.ToPgUUID(id),
 	})
@@ -186,7 +198,7 @@ func (r *communicationRepository) CreateNotification(ctx context.Context, n *com
 		entityID = shared.ToPgUUID(*n.EntityID)
 	}
 
-	row, err := r.queries.CreateNotification(ctx, sqlc.CreateNotificationParams{
+	row, err := r.q(ctx).CreateNotification(ctx, sqlc.CreateNotificationParams{
 		ID:         shared.ToPgUUID(n.ID),
 		TenantID:   shared.ToPgUUID(n.TenantID),
 		UserID:     shared.ToPgUUID(n.UserID),
@@ -208,7 +220,7 @@ func (r *communicationRepository) CreateNotification(ctx context.Context, n *com
 }
 
 func (r *communicationRepository) GetNotificationByID(ctx context.Context, tenantID, id shared.ID) (*communication.Notification, error) {
-	row, err := r.queries.GetNotificationByID(ctx, sqlc.GetNotificationByIDParams{
+	row, err := r.q(ctx).GetNotificationByID(ctx, sqlc.GetNotificationByIDParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		ID:       shared.ToPgUUID(id),
 	})
@@ -259,7 +271,7 @@ func (r *communicationRepository) GetNotificationByID(ctx context.Context, tenan
 }
 
 func (r *communicationRepository) ListNotificationsByUser(ctx context.Context, tenantID, userID shared.ID, unreadOnly bool, limit, offset int32) ([]communication.Notification, error) {
-	rows, err := r.queries.ListNotificationsByUser(ctx, sqlc.ListNotificationsByUserParams{
+	rows, err := r.q(ctx).ListNotificationsByUser(ctx, sqlc.ListNotificationsByUserParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		UserID:   shared.ToPgUUID(userID),
 		Column3:  unreadOnly,
@@ -315,7 +327,7 @@ func (r *communicationRepository) ListNotificationsByUser(ctx context.Context, t
 }
 
 func (r *communicationRepository) MarkNotificationRead(ctx context.Context, tenantID, userID, id shared.ID) error {
-	return r.queries.MarkNotificationRead(ctx, sqlc.MarkNotificationReadParams{
+	return r.q(ctx).MarkNotificationRead(ctx, sqlc.MarkNotificationReadParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		UserID:   shared.ToPgUUID(userID),
 		ID:       shared.ToPgUUID(id),
@@ -323,14 +335,14 @@ func (r *communicationRepository) MarkNotificationRead(ctx context.Context, tena
 }
 
 func (r *communicationRepository) MarkAllNotificationsRead(ctx context.Context, tenantID, userID shared.ID) error {
-	return r.queries.MarkAllNotificationsRead(ctx, sqlc.MarkAllNotificationsReadParams{
+	return r.q(ctx).MarkAllNotificationsRead(ctx, sqlc.MarkAllNotificationsReadParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		UserID:   shared.ToPgUUID(userID),
 	})
 }
 
 func (r *communicationRepository) CountUnreadNotifications(ctx context.Context, tenantID, userID shared.ID) (int64, error) {
-	return r.queries.CountUnreadNotifications(ctx, sqlc.CountUnreadNotificationsParams{
+	return r.q(ctx).CountUnreadNotifications(ctx, sqlc.CountUnreadNotificationsParams{
 		TenantID: shared.ToPgUUID(tenantID),
 		UserID:   shared.ToPgUUID(userID),
 	})

@@ -11,6 +11,7 @@ import (
 	"github.com/akordium-id/mergiate-core/internal/core/domain/event"
 	"github.com/akordium-id/mergiate-core/internal/core/domain/shared"
 	"github.com/akordium-id/mergiate-core/internal/core/repository/postgres/sqlc"
+	"github.com/akordium-id/mergiate-core/pkg/database"
 )
 
 type outboxRepository struct {
@@ -24,6 +25,13 @@ func NewOutboxRepository(pool *pgxpool.Pool) event.OutboxRepository {
 		pool:    pool,
 		queries: sqlc.New(pool),
 	}
+}
+
+func (r *outboxRepository) q(ctx context.Context) *sqlc.Queries {
+	if tx := database.TxFromContext(ctx); tx != nil {
+		return r.queries.WithTx(tx)
+	}
+	return r.queries
 }
 
 func (r *outboxRepository) Create(ctx context.Context, evt *event.OutboxEvent) error {
@@ -46,7 +54,7 @@ func (r *outboxRepository) Create(ctx context.Context, evt *event.OutboxEvent) e
 		CreatedAt:     pgtype.Timestamptz{Time: evt.CreatedAt, Valid: true},
 	}
 
-	row, err := r.queries.CreateOutboxEvent(ctx, params)
+	row, err := r.q(ctx).CreateOutboxEvent(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -64,7 +72,7 @@ func (r *outboxRepository) FetchPending(ctx context.Context, maxRetries, limit i
 		maxRetries = 5
 	}
 
-	rows, err := r.queries.FetchPendingOutboxEvents(ctx, sqlc.FetchPendingOutboxEventsParams{
+	rows, err := r.q(ctx).FetchPendingOutboxEvents(ctx, sqlc.FetchPendingOutboxEventsParams{
 		RetryCount: maxRetries,
 		Limit:      limit,
 	})
@@ -104,7 +112,7 @@ func (r *outboxRepository) FetchPending(ctx context.Context, maxRetries, limit i
 }
 
 func (r *outboxRepository) MarkPublished(ctx context.Context, id shared.ID, publishedAt time.Time) error {
-	return r.queries.MarkOutboxEventPublished(ctx, sqlc.MarkOutboxEventPublishedParams{
+	return r.q(ctx).MarkOutboxEventPublished(ctx, sqlc.MarkOutboxEventPublishedParams{
 		ID:          shared.ToPgUUID(id),
 		PublishedAt: pgtype.Timestamptz{Time: publishedAt, Valid: true},
 	})
@@ -115,7 +123,7 @@ func (r *outboxRepository) MarkFailed(ctx context.Context, id shared.ID, errMsg 
 	if errMsg != "" {
 		errPtr = &errMsg
 	}
-	return r.queries.MarkOutboxEventFailed(ctx, sqlc.MarkOutboxEventFailedParams{
+	return r.q(ctx).MarkOutboxEventFailed(ctx, sqlc.MarkOutboxEventFailedParams{
 		ID:           shared.ToPgUUID(id),
 		ErrorMessage: errPtr,
 	})
