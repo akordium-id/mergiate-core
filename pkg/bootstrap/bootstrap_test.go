@@ -2,6 +2,7 @@ package bootstrap_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -149,13 +150,7 @@ func TestBootstrapIdempotencyAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to list user permissions: %v", err)
 	}
-	userHasWildcard := false
-	for _, p := range perms {
-		if p == "*" {
-			userHasWildcard = true
-			break
-		}
-	}
+	userHasWildcard := slices.Contains(perms, "*")
 	if !userHasWildcard {
 		t.Errorf("owner user should have '*' permission in tenant")
 	}
