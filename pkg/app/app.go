@@ -36,6 +36,7 @@ import (
 	"github.com/akordium-id/mergiate-core/internal/core/usecase/product"
 	sequenceusecase "github.com/akordium-id/mergiate-core/internal/core/usecase/sequence"
 	"github.com/akordium-id/mergiate-core/internal/core/usecase/tenant"
+	webhookuc "github.com/akordium-id/mergiate-core/internal/core/usecase/webhook"
 	"github.com/akordium-id/mergiate-core/internal/core/worker"
 	"github.com/akordium-id/mergiate-core/pkg/auth"
 	"github.com/akordium-id/mergiate-core/pkg/config"
@@ -43,6 +44,7 @@ import (
 	"github.com/akordium-id/mergiate-core/pkg/eventbus"
 	"github.com/akordium-id/mergiate-core/pkg/migrations"
 	"github.com/akordium-id/mergiate-core/pkg/module"
+	"github.com/akordium-id/mergiate-core/pkg/ratelimit"
 	"github.com/akordium-id/mergiate-core/pkg/storage/local"
 )
 
@@ -63,15 +65,17 @@ type Options struct {
 
 // App is the assembled core application instance.
 type App struct {
-	cfg            *config.Config
-	logger         *slog.Logger
-	db             *pgxpool.Pool
-	tokenMgr       auth.TokenManager
-	moduleHost     module.Host
-	moduleRegistry *module.Registry
-	router         chi.Router
-	outboxWorker   *worker.OutboxWorker
-	workerCancel   context.CancelFunc
+	cfg              *config.Config
+	logger           *slog.Logger
+	db               *pgxpool.Pool
+	tokenMgr         auth.TokenManager
+	moduleHost       module.Host
+	moduleRegistry   *module.Registry
+	router           chi.Router
+	outboxWorker     *worker.OutboxWorker
+	webhookDispatcher *worker.WebhookDispatcher
+	rateLimiter      ratelimit.Limiter
+	workerCancel     context.CancelFunc
 }
 
 // New assembles all core repositories, usecases, handlers, and modules.
@@ -127,6 +131,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	attachmentRepo := postgres.NewAttachmentRepository(dbPool)
 	commRepo := postgres.NewCommunicationRepository(dbPool)
 	serviceAccountRepo := postgres.NewServiceAccountRepository(dbPool)
+	webhookRepo := postgres.NewWebhookRepository(dbPool)
 
 	// Usecases
 	tenantUsecase := tenant.NewUsecase(tenantRepo)
@@ -141,6 +146,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	attachmentUsecase := attachmentusecase.NewUsecase(attachmentRepo, storageDriver)
 	commUsecase := commusecase.NewUsecase(commRepo, auditRepo, attachmentRepo, outboxRepo)
 	serviceAccountUsecase := identityusecase.NewServiceAccountUsecase(serviceAccountRepo)
+	webhookUsecase := webhookuc.New(webhookRepo)
 
 	// Handlers
 	tenantHandler := v1.NewTenantHandler(tenantUsecase, tokenMgr)
@@ -156,6 +162,22 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	attachmentHandler := v1.NewAttachmentHandler(attachmentUsecase, tokenMgr)
 	commHandler := v1.NewCommunicationHandler(commUsecase, tokenMgr)
 	serviceAccountHandler := v1.NewServiceAccountHandler(serviceAccountUsecase, tokenMgr)
+	webhookHandler := v1.NewWebhookHandler(webhookUsecase)
+
+	// Rate limiter
+	var limiter ratelimit.Limiter
+	if cfg.RateLimitEnabled {
+		limiter = ratelimit.NewInMemory(ratelimit.InMemoryConfig{
+			RequestsPerWindow: cfg.RateLimitPerMinute,
+			Window:            60 * time.Second,
+		})
+		logger.Info("rate limiting enabled",
+			slog.Int("requests_per_minute", cfg.RateLimitPerMinute),
+		)
+	}
+
+	// Webhook dispatcher (subscribes to event bus, POSTs to registered endpoints).
+	webhookDispatcher := worker.NewWebhookDispatcher(webhookRepo, bus, logger)
 
 	// Module registry
 	moduleHost := module.NewHost(dbPool, bus, storageDriver, tokenMgr, outboxRepo, logger)
@@ -195,23 +217,27 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		AttachmentHandler:     attachmentHandler,
 		CommunicationHandler:  commHandler,
 		ServiceAccountHandler: serviceAccountHandler,
+		WebhookHandler:        webhookHandler,
 		ModuleRegistry:        moduleRegistry,
 		TokenManager:          tokenMgr,
 		ApiKeyValidator:       serviceAccountUsecase,
+		Limiter:               limiter,
 		CORSAllowedOrigins:    cfg.CORSAllowedOrigins,
 	}
 
 	router := deliveryhttp.NewRouter(dbPool, handlers)
 
 	return &App{
-		cfg:            cfg,
-		logger:         logger,
-		db:             dbPool,
-		tokenMgr:       tokenMgr,
-		moduleHost:     moduleHost,
-		moduleRegistry: moduleRegistry,
-		router:         router.(chi.Router),
-		outboxWorker:   outboxWorker,
+		cfg:               cfg,
+		logger:            logger,
+		db:                dbPool,
+		tokenMgr:          tokenMgr,
+		moduleHost:        moduleHost,
+		moduleRegistry:    moduleRegistry,
+		router:            router.(chi.Router),
+		outboxWorker:      outboxWorker,
+		webhookDispatcher: webhookDispatcher,
+		rateLimiter:       limiter,
 	}, nil
 }
 
@@ -230,12 +256,15 @@ func (a *App) Tokens() auth.TokenManager { return a.tokenMgr }
 // Logger returns the application logger.
 func (a *App) Logger() *slog.Logger { return a.logger }
 
-// Start begins the outbox worker and HTTP server. It blocks until the context is cancelled
-// or the server encounters a fatal error.
+// Start begins the outbox worker, webhook dispatcher, and HTTP server.
+// It blocks until the context is cancelled or the server encounters a fatal error.
 func (a *App) Start(ctx context.Context) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	a.workerCancel = workerCancel
 	go a.outboxWorker.Start(workerCtx)
+
+	// Start webhook dispatcher — subscribes to event bus synchronously then returns.
+	a.webhookDispatcher.Start(workerCtx)
 
 	addr := fmt.Sprintf(":%s", a.cfg.AppPort)
 	server := &http.Server{
@@ -259,6 +288,9 @@ func (a *App) Start(ctx context.Context) error {
 		if err := a.moduleRegistry.ShutdownAll(shutdownCtx); err != nil {
 			a.logger.Error("error during module shutdown", slog.Any("error", err))
 		}
+		if a.rateLimiter != nil {
+			a.rateLimiter.Close()
+		}
 		shutdownErrChan <- server.Shutdown(shutdownCtx)
 	}()
 
@@ -275,6 +307,9 @@ func (a *App) Start(ctx context.Context) error {
 func (a *App) Shutdown(ctx context.Context) error {
 	if a.workerCancel != nil {
 		a.workerCancel()
+	}
+	if a.rateLimiter != nil {
+		a.rateLimiter.Close()
 	}
 	return a.moduleRegistry.ShutdownAll(ctx)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/akordium-id/mergiate-core/internal/core/domain/identity"
 	"github.com/akordium-id/mergiate-core/pkg/auth"
 	"github.com/akordium-id/mergiate-core/pkg/module"
+	"github.com/akordium-id/mergiate-core/pkg/ratelimit"
 	"github.com/akordium-id/mergiate-core/pkg/response"
 )
 
@@ -33,9 +34,12 @@ type Handlers struct {
 	AttachmentHandler     *v1.AttachmentHandler
 	CommunicationHandler  *v1.CommunicationHandler
 	ServiceAccountHandler *v1.ServiceAccountHandler
+	WebhookHandler        *v1.WebhookHandler
 	ModuleRegistry        *module.Registry
 	TokenManager          auth.TokenManager
 	ApiKeyValidator       identity.APIKeyValidator
+	// Limiter is the rate limiter backend. If nil, rate limiting is disabled.
+	Limiter ratelimit.Limiter
 	// CORSAllowedOrigins is the list of allowed origins for CORS.
 	// Empty slice = no cross-origin access (same-origin / reverse-proxy deployments).
 	// Wildcard "*" is NOT accepted when credentials are in use — pass explicit origins only.
@@ -109,6 +113,10 @@ func NewRouter(db *pgxpool.Pool, handlers Handlers) http.Handler {
 			if handlers.TokenManager != nil {
 				r.Use(middleware.AuthRequired(handlers.TokenManager, handlers.ApiKeyValidator))
 			}
+			// Rate limiting — applied after auth so we have tenant/SA identity in context.
+			if handlers.Limiter != nil {
+				r.Use(middleware.RateLimit(handlers.Limiter))
+			}
 
 			if handlers.IdentityHandler != nil {
 				handlers.IdentityHandler.RegisterRoutes(r)
@@ -127,6 +135,9 @@ func NewRouter(db *pgxpool.Pool, handlers Handlers) http.Handler {
 			}
 			if handlers.ServiceAccountHandler != nil {
 				handlers.ServiceAccountHandler.RegisterRoutes(r)
+			}
+			if handlers.WebhookHandler != nil {
+				handlers.WebhookHandler.RegisterRoutes(r)
 			}
 			if handlers.ModuleRegistry != nil {
 				// Module routes are also behind AuthRequired.

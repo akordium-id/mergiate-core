@@ -27,6 +27,11 @@ type Config struct {
 	JWTExpiry          time.Duration
 	CORSAllowedOrigins []string // from CORS_ALLOWED_ORIGINS (comma-separated)
 	StoragePath        string   // from STORAGE_PATH
+
+	// Rate limiting (RATE_LIMIT_*)
+	RateLimitEnabled    bool // RATE_LIMIT_ENABLED (default: false)
+	RateLimitPerMinute  int  // RATE_LIMIT_PER_MINUTE (default: 300)
+	RateLimitBurst      int  // RATE_LIMIT_BURST — unused by in-memory impl, reserved for Redis token bucket
 }
 
 // IsProduction returns true if AppEnv is a production-like environment.
@@ -96,6 +101,10 @@ func Load() (*Config, error) {
 
 	storagePath := getEnv("STORAGE_PATH", "./storage/uploads")
 
+	rateLimitEnabled := getEnv("RATE_LIMIT_ENABLED", "false") == "true"
+	rateLimitPerMinute := int(getEnvAsInt32("RATE_LIMIT_PER_MINUTE", 300))
+	rateLimitBurst := int(getEnvAsInt32("RATE_LIMIT_BURST", 50))
+
 	cfg := &Config{
 		AppEnv:             appEnv,
 		AppPort:            appPort,
@@ -109,6 +118,9 @@ func Load() (*Config, error) {
 		JWTExpiry:          jwtExpiry,
 		CORSAllowedOrigins: corsOrigins,
 		StoragePath:        storagePath,
+		RateLimitEnabled:   rateLimitEnabled,
+		RateLimitPerMinute: rateLimitPerMinute,
+		RateLimitBurst:     rateLimitBurst,
 	}
 	return cfg, nil
 }
