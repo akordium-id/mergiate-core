@@ -59,6 +59,9 @@ type Options struct {
 	Config *config.Config
 	// Logger to use. If nil, slog.Default() is used.
 	Logger *slog.Logger
+	// DBPool is an optional externally configured pgxpool.Pool (e.g. with custom hooks or connection settings).
+	// If nil, a pool is automatically created using Config.
+	DBPool *pgxpool.Pool
 	// Modules are external module implementations registered before router build.
 	Modules []module.Module
 	// RunMigrations, if true, runs pkg/migrations.Up on app start before serving.
@@ -95,9 +98,13 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	cfg := opts.Config
 
 	// DB
-	dbPool, err := database.NewPostgresPool(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("database pool: %w", err)
+	dbPool := opts.DBPool
+	if dbPool == nil {
+		var err error
+		dbPool, err = database.NewPostgresPool(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("database pool: %w", err)
+		}
 	}
 
 	// Optional: run migrations before wiring
@@ -313,11 +320,18 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	addr := fmt.Sprintf(":%s", a.cfg.AppPort)
-	// h2c allows HTTP/2 cleartext multiplexing (standard for ConnectRPC and modern reverse proxies)
-	h2cHandler := h2c.NewHandler(a.router, &http2.Server{})
+	var httpHandler http.Handler = a.router
+	if a.cfg.HTTP2Enabled {
+		// h2c allows HTTP/2 cleartext multiplexing (standard for ConnectRPC and modern reverse proxies)
+		httpHandler = h2c.NewHandler(a.router, &http2.Server{})
+		a.logger.Info("HTTP/2 (h2c) transport enabled")
+	} else {
+		a.logger.Info("HTTP/1.1 transport enabled")
+	}
+
 	server := &http.Server{
 		Addr:         addr,
-		Handler:      h2cHandler,
+		Handler:      httpHandler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

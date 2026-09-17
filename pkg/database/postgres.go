@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/akordium-id/mergiate-core/pkg/config"
@@ -22,6 +23,14 @@ func NewPostgresPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, er
 	poolConfig.MinConns = cfg.DBMinConns
 	poolConfig.MaxConnIdleTime = cfg.DBMaxConnIdle
 	poolConfig.MaxConnLifetime = cfg.DBMaxConnLife
+
+	// PgBouncer transaction pooling does not support named prepared statements.
+	// When DBPgBouncer is enabled, disable statement cache and use unnamed prepared statements.
+	if cfg.DBPgBouncer {
+		poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+		poolConfig.ConnConfig.StatementCacheCapacity = 0
+		slog.Info("pgbouncer mode enabled: prepared statement caching disabled")
+	}
 
 	connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

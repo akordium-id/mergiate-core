@@ -23,10 +23,14 @@ type Config struct {
 	DBMinConns         int32
 	DBMaxConnIdle      time.Duration
 	DBMaxConnLife      time.Duration
+	DBPgBouncer        bool     // DB_PGBOUNCER (default: false). When true, disables prepared statements for transaction pooling.
 	JWTSecret          string
 	JWTExpiry          time.Duration
 	CORSAllowedOrigins []string // from CORS_ALLOWED_ORIGINS (comma-separated)
 	StoragePath        string   // from STORAGE_PATH
+
+	// HTTP Transport
+	HTTP2Enabled bool // HTTP2_ENABLED (default: true). Set false for HTTP/1.1 only.
 
 	// Rate limiting (RATE_LIMIT_*)
 	RateLimitEnabled    bool // RATE_LIMIT_ENABLED (default: false)
@@ -83,6 +87,9 @@ func Load() (*Config, error) {
 
 	maxConns := getEnvAsInt32("DB_MAX_CONNS", 15)
 	minConns := getEnvAsInt32("DB_MIN_CONNS", 3)
+	maxConnIdle := getEnvAsDuration("DB_MAX_CONN_IDLE", 15*time.Minute)
+	maxConnLife := getEnvAsDuration("DB_MAX_CONN_LIFE", 1*time.Hour)
+	dbPgBouncer := getEnv("DB_PGBOUNCER", "false") == "true"
 
 	jwtSecret := getEnv("JWT_SECRET", insecureJWTSecretFallback)
 	jwtExpiryStr := getEnv("JWT_EXPIRY", "24h")
@@ -105,6 +112,8 @@ func Load() (*Config, error) {
 
 	storagePath := getEnv("STORAGE_PATH", "./storage/uploads")
 
+	http2Enabled := getEnv("HTTP2_ENABLED", "true") == "true"
+
 	rateLimitEnabled := getEnv("RATE_LIMIT_ENABLED", "false") == "true"
 	rateLimitPerMinute := int(getEnvAsInt32("RATE_LIMIT_PER_MINUTE", 300))
 	rateLimitBurst := int(getEnvAsInt32("RATE_LIMIT_BURST", 50))
@@ -119,12 +128,14 @@ func Load() (*Config, error) {
 		DatabaseURL:        dbURL,
 		DBMaxConns:         maxConns,
 		DBMinConns:         minConns,
-		DBMaxConnIdle:      15 * time.Minute,
-		DBMaxConnLife:      1 * time.Hour,
+		DBMaxConnIdle:      maxConnIdle,
+		DBMaxConnLife:      maxConnLife,
+		DBPgBouncer:        dbPgBouncer,
 		JWTSecret:          jwtSecret,
 		JWTExpiry:          jwtExpiry,
 		CORSAllowedOrigins: corsOrigins,
 		StoragePath:        storagePath,
+		HTTP2Enabled:       http2Enabled,
 		RateLimitEnabled:   rateLimitEnabled,
 		RateLimitPerMinute: rateLimitPerMinute,
 		RateLimitBurst:     rateLimitBurst,
@@ -151,4 +162,16 @@ func getEnvAsInt32(key string, fallback int32) int32 {
 		return fallback
 	}
 	return int32(val)
+}
+
+func getEnvAsDuration(key string, fallback time.Duration) time.Duration {
+	valStr := os.Getenv(key)
+	if valStr == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(valStr)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
