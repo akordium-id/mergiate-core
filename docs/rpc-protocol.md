@@ -1,48 +1,48 @@
 # M2M RPC Protocol (ConnectRPC & Pure gRPC)
 
-`mergiate-core` menyediakan dual transport untuk integrasi antar-sistem Machine-to-Machine (M2M) berlatensi rendah:
+`mergiate-core` provides dual transport layers for low-latency Machine-to-Machine (M2M) system integration:
 
-1. **ConnectRPC** — berjalan langsung di atas port HTTP yang sama dengan Chi HTTP router bawaan (`APP_PORT`, default `:8080`). Mendukung:
-   - Protokol Connect (HTTP POST + JSON/binary)
-   - gRPC over HTTP/2 (`application/grpc`)
-   - gRPC-Web (browser-friendly)
-2. **Pure gRPC** (`google.golang.org/grpc`) — server gRPC standalone yang berjalan di port terpisah (`GRPC_PORT`, default `:50051`) dengan binary Protobuf.
+1. **ConnectRPC** — runs alongside the default Chi HTTP router on the same application port (`APP_PORT`, default `:8080`). It supports:
+   - Connect protocol (HTTP POST with JSON or binary Protobuf)
+   - Standard gRPC over HTTP/2 (`application/grpc`)
+   - gRPC-Web (browser and edge-friendly)
+2. **Pure gRPC** (`google.golang.org/grpc`) — a standalone gRPC server running on a dedicated port (`GRPC_PORT`, default `:50051`) using native binary Protobuf.
 
 ---
 
-## 1. Konfigurasi Environment
+## 1. Environment Configuration
 
-| Variable | Type | Default | Deskripsi |
+| Variable | Type | Default | Description |
 |---|---|---|---|
-| `GRPC_ENABLED` | bool | `true` | Mengaktifkan/menonaktifkan standalone gRPC server |
-| `GRPC_PORT` | string | `50051` | Port listen untuk standalone gRPC server |
-| `APP_PORT` | string | `8080` | Port HTTP (Chi REST + ConnectRPC) |
+| `GRPC_ENABLED` | bool | `true` | Enables or disables the standalone gRPC server |
+| `GRPC_PORT` | string | `50051` | Listening port for standalone gRPC server |
+| `APP_PORT` | string | `8080` | Listening port for HTTP server (Chi REST + ConnectRPC) |
 
 ---
 
-## 2. Services yang Tersedia
+## 2. Available Services
 
 ### PingService (`mergiate.v1.PingService`)
-Endpoint diagnostik dan health check M2M (Public / Tanpa auth):
+Diagnostic and connectivity ping endpoint (Public / Unauthenticated):
 - `rpc Ping(PingRequest) returns (PingResponse)`
 
 ### Standard Health Service (`grpc.health.v1.Health`)
-Standar health check gRPC (Public / Tanpa auth):
+Standard gRPC health checking protocol (Public / Unauthenticated):
 - `rpc Check(HealthCheckRequest) returns (HealthCheckResponse)`
 - `rpc Watch(HealthCheckRequest) returns (stream HealthCheckResponse)`
 
 ### PartyService (`mergiate.v1.PartyService`)
-Operasi entitas bisnis Party (Butuh Auth: JWT atau API Key):
+Business aggregate operations for Parties (Requires Authentication: JWT Bearer or M2M API Key):
 - `rpc GetParty(GetPartyRequest) returns (GetPartyResponse)`
 - `rpc CreateParty(CreatePartyRequest) returns (CreatePartyResponse)`
 - `rpc ListParties(ListPartiesRequest) returns (ListPartiesResponse)`
 
 ---
 
-## 3. Cara Akses
+## 3. Usage & Examples
 
 ### A. ConnectRPC via cURL (HTTP JSON POST)
-ConnectRPC memungkinkan query via cURL biasa ke port HTTP:
+ConnectRPC allows calling RPC procedures using standard HTTP POST requests:
 
 #### 1. Ping
 ```bash
@@ -60,27 +60,27 @@ Response:
 }
 ```
 
-#### 2. Create Party (Dengan API Key)
+#### 2. Create Party (With M2M API Key)
 ```bash
 curl -X POST http://localhost:8080/mergiate.v1.PartyService/CreateParty \
   -H "Content-Type: application/json" \
   -H "X-API-Key: mrg_live_xxxxxxxxxxxxxxxx" \
   -d '{
     "type": "organization",
-    "name": "PT Akordium Teknologi",
-    "code": "AKR",
+    "name": "Acme Technologies",
+    "code": "ACM",
     "initial_roles": ["customer"]
   }'
 ```
 
-#### 3. Create Party (Dengan JWT Bearer Token)
+#### 3. Create Party (With User JWT Bearer Token)
 ```bash
 curl -X POST http://localhost:8080/mergiate.v1.PartyService/CreateParty \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt_token>" \
   -d '{
     "type": "person",
-    "name": "Faiq Najib",
+    "name": "John Doe",
     "initial_roles": ["employee"]
   }'
 ```
@@ -95,16 +95,16 @@ grpcurl -plaintext -d '{"message": "test ping"}' \
   localhost:50051 mergiate.v1.PingService/Ping
 ```
 
-#### Health Check:
+#### Standard Health Check:
 ```bash
 grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 ```
 
-#### Party Service (dengan Metadata Auth):
+#### Party Service (with Auth Metadata):
 ```bash
 grpcurl -plaintext \
   -H "x-api-key: mrg_live_xxxxxxxx" \
-  -d '{"name": "Client A", "type": "organization"}' \
+  -d '{"name": "Acme Corp", "type": "organization"}' \
   localhost:50051 mergiate.v1.PartyService/CreateParty
 ```
 
@@ -186,11 +186,11 @@ func main() {
 
 ---
 
-## 4. Re-generating Code dari Protobuf
+## 4. Re-generating Code from Protobuf
 
-Jika Anda menambah file `.proto` di direktori `proto/mergiate/v1/`:
+If you update or add `.proto` schemas in the `proto/mergiate/v1/` directory:
 
-Pastikan toolchain terinstall:
+Ensure required plugins are installed:
 ```bash
 go install github.com/bufbuild/buf/cmd/buf@latest
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -198,8 +198,8 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 go install connectrpc.com/connect/cmd/protoc-gen-connect-go@latest
 ```
 
-Lalu jalankan code generation:
+Execute code generation:
 ```bash
 buf generate
 ```
-Kode baru akan otomatis tergenerate di dalam direktori `gen/mergiate/v1/`.
+All stubs will be generated in `gen/mergiate/v1/`.

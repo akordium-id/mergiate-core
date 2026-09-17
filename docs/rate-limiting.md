@@ -1,30 +1,30 @@
 # Rate Limiting
 
-Dokumentasi fitur **Rate Limiting** di platform **Mergiate Core**.
+Documentation for the **Rate Limiting** engine in **Mergiate Core**.
 
 ---
 
 ## 1. Overview
 
-Rate limiting membatasi jumlah HTTP request yang bisa dilakukan oleh satu tenant atau satu service account dalam satu periode waktu tertentu. Fitur ini penting untuk:
+Rate limiting restricts the number of HTTP requests that can be performed by a single tenant or service account within a designated time window. This feature is essential for:
 
-- Melindungi platform dari abuse (brute force, scraping)
-- Memungkinkan penagihan berbasis tier (Starter/Pro/Enterprise)
-- Menjaga stabilitas server multi-tenant
+- Protecting the platform against abuse (brute force, aggressive scraping, accidental infinite loops)
+- Enabling tier-based usage policies (e.g., Starter, Pro, Enterprise)
+- Safeguarding stability across shared multi-tenant resources
 
 ---
 
-## 2. Konfigurasi
+## 2. Configuration
 
-Rate limiting **dinonaktifkan secara default** dan harus diaktifkan via environment variable.
+Rate limiting is **disabled by default** and can be enabled via environment variables.
 
-| Env Var | Default | Deskripsi |
+| Env Var | Default | Description |
 |---|---|---|
-| `RATE_LIMIT_ENABLED` | `false` | `true` untuk mengaktifkan rate limiting |
-| `RATE_LIMIT_PER_MINUTE` | `300` | Jumlah request maksimum per menit per bucket |
-| `RATE_LIMIT_BURST` | `50` | Reserved untuk Redis token bucket (future) |
+| `RATE_LIMIT_ENABLED` | `false` | Set to `true` to activate rate limiting |
+| `RATE_LIMIT_PER_MINUTE` | `300` | Maximum allowed requests per minute per bucket |
+| `RATE_LIMIT_BURST` | `50` | Reserved for distributed token bucket algorithms |
 
-Contoh `.env`:
+Example `.env`:
 ```env
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_PER_MINUTE=300
@@ -32,36 +32,36 @@ RATE_LIMIT_PER_MINUTE=300
 
 ---
 
-## 3. Algoritma: Sliding Window Counter
+## 3. Algorithm: Sliding Window Counter
 
-Implementasi default menggunakan **in-memory sliding window** (bukan token bucket):
+The default implementation uses an **in-memory sliding window counter**:
 
-- Setiap request dicatat timestamp-nya per key bucket.
-- Saat request masuk, timestamp yang lebih lama dari 1 menit di-evict.
-- Jika jumlah timestamp dalam window ≥ limit → request ditolak.
-- Background goroutine membersihkan bucket stale setiap 1 menit.
+- Every incoming request records a timestamp within the respective key bucket.
+- Timestamps older than the sliding window (60 seconds) are automatically evicted.
+- If the count of timestamps within the active window reaches or exceeds the configured limit, the request is rejected.
+- A background ticker evicts stale, idle buckets periodically to prevent memory leaks.
 
-> **Catatan**: Implementasi in-memory tidak persisten lintas restart server dan tidak shared antar instance (single-process only). Untuk multi-instance deployment, ganti implementasi via interface `ratelimit.Limiter` dengan backend Redis.
+> **Note**: The default in-memory implementation operates on a single process and does not synchronize state across multiple server instances. For distributed multi-instance clusters, implement the `ratelimit.Limiter` interface using a Redis backend.
 
 ---
 
-## 4. Bucketing: Siapa yang di-throttle?
+## 4. Key Bucketing Strategy
 
-Rate limiter menggunakan key hierarchy berikut (prioritas dari atas):
+The rate limiter evaluates client identities using the following key hierarchy:
 
-| Kondisi | Key Bucket |
+| Client Context | Bucket Key |
 |---|---|
-| Request dari **Service Account** (API Key) | `rl:sa:<serviceAccountID>` |
-| Request dari **User** (JWT Bearer) | `rl:tenant:<tenantID>` |
-| Fallback (tidak terauth — tidak seharusnya terjadi) | `rl:ip:<remoteAddr>` |
+| Request authenticated via **Service Account** (API Key) | `rl:sa:<serviceAccountID>` |
+| Request authenticated via **User Session** (JWT Bearer) | `rl:tenant:<tenantID>` |
+| Fallback (Unauthenticated / Public routes) | `rl:ip:<remoteAddr>` |
 
-Artinya: satu Service Account yang agresif **tidak akan menghabiskan quota** tenant lain, dan service account satu tidak mempengaruhi service account lain dalam tenant yang sama.
+This ensures that an aggressive or misconfigured service account will not exhaust quota for other service accounts within the same tenant, nor impact neighboring tenants.
 
 ---
 
 ## 5. Response Headers
 
-Setiap request yang melewati rate limiter — baik allowed maupun blocked — mendapatkan headers informatif:
+Every request processed by the rate limiting middleware includes RFC-compliant rate limit telemetry headers:
 
 ```http
 X-RateLimit-Limit: 300
@@ -69,17 +69,17 @@ X-RateLimit-Remaining: 147
 X-RateLimit-Reset: 1726540800
 ```
 
-| Header | Nilai |
+| Header | Description |
 |---|---|
-| `X-RateLimit-Limit` | Batas maksimum request per window |
-| `X-RateLimit-Remaining` | Sisa request dalam window saat ini |
-| `X-RateLimit-Reset` | Unix timestamp (detik) saat window reset |
+| `X-RateLimit-Limit` | Maximum request capacity allowed within the time window |
+| `X-RateLimit-Remaining` | Remaining request quota available in the current window |
+| `X-RateLimit-Reset` | Unix timestamp (in seconds) when the current window resets |
 
 ---
 
-## 6. Response 429
+## 6. HTTP 429 Response
 
-Jika rate limit terlampaui, server merespons dengan:
+When a client exceeds their allocated threshold, the server immediately returns an HTTP 429 response with a `Retry-After` header:
 
 ```http
 HTTP/1.1 429 Too Many Requests
@@ -97,25 +97,25 @@ Content-Type: application/json
 }
 ```
 
-Client harus menghormati header `Retry-After` sebelum mencoba ulang.
+Clients are expected to pause execution until the seconds specified in `Retry-After` have elapsed.
 
 ---
 
-## 7. Posisi di Middleware Stack
+## 7. Middleware Pipeline Integration
 
-Rate limiter dipasang **setelah `AuthRequired`** di semua route `/api/v1` yang ter-protect:
+The rate limiter is mounted directly downstream of authentication middleware:
 
 ```
-Request → AuthRequired → RateLimit → TenantRequired → Handler
+Request → AuthRequired → RateLimit → TenantRequired → Controller Handler
 ```
 
-Urutan ini penting karena rate limiter membutuhkan `tenant_id` / `service_account_id` dari context yang di-inject oleh `AuthRequired`.
+This guarantees that `tenant_id` and `service_account_id` contexts have already been verified before the rate limit bucket key is computed.
 
 ---
 
-## 8. Menambahkan Backend Redis (Future)
+## 8. Custom Backend Extension (e.g. Redis)
 
-Untuk upgrade ke Redis tanpa mengubah middleware, implementasikan interface `ratelimit.Limiter`:
+To replace the in-memory limiter with a distributed storage backend without modifying route handlers, provide an implementation conforming to the `ratelimit.Limiter` interface:
 
 ```go
 // pkg/ratelimit/ratelimit.go
@@ -125,23 +125,4 @@ type Limiter interface {
 }
 ```
 
-Contoh konfigurasi di `pkg/app/app.go`:
-```go
-// Ganti:
-limiter = ratelimit.NewInMemory(cfg)
-
-// Dengan implementasi Redis custom:
-limiter = myredis.NewRedisLimiter(redisClient, cfg)
-```
-
----
-
-## 9. Tier-based Rate Limiting (Roadmap)
-
-Untuk paid cloud service dengan tier berbeda (Starter/Pro/Enterprise), bisa extend dengan menyimpan limit per-tenant di database:
-
-```
-tenants.rate_limit_per_minute INT DEFAULT 300
-```
-
-Lalu pass per-tenant limit ke `Limiter.Allow()` (perlu extend interface). Saat ini semua tenant menggunakan limit global dari env.
+And configure it during application assembly in `pkg/app/app.go`.
