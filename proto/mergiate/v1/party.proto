@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package mergiate.v1;
+
+option go_package = "github.com/akordium-id/mergiate-core/gen/mergiate/v1;mergiatev1";
+
+service PartyService {
+  rpc GetParty(GetPartyRequest) returns (GetPartyResponse);
+  rpc CreateParty(CreatePartyRequest) returns (CreatePartyResponse);
+  rpc ListParties(ListPartiesRequest) returns (ListPartiesResponse);
+}
+
+message PartyRole {
+  string id = 1;
+  string tenant_id = 2;
+  string party_id = 3;
+  string organization_id = 4;
+  string role_type = 5;
+  string status = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message Party {
+  string id = 1;
+  string tenant_id = 2;
+  string type = 3;
+  string code = 4;
+  string name = 5;
+  string legal_name = 6;
+  string tax_id = 7;
+  string status = 8;
+  repeated PartyRole roles = 9;
+  string created_at = 10;
+  string updated_at = 11;
+}
+
+message ContactAddress {
+  string id = 1;
+  string type = 2;
+  string label = 3;
+  string line1 = 4;
+  string line2 = 5;
+  string city = 6;
+  string state = 7;
+  string postal_code = 8;
+  string country_code = 9;
+  bool is_primary = 10;
+}
+
+message ContactItem {
+  string id = 1;
+  string type = 2;
+  string value = 3;
+  string label = 4;
+  bool is_primary = 5;
+}
+
+message GetPartyRequest {
+  string id = 1;
+}
+
+message GetPartyResponse {
+  Party party = 1;
+  repeated ContactAddress addresses = 2;
+  repeated ContactItem contacts = 3;
+}
+
+message CreatePartyRequest {
+  string type = 1;
+  string code = 2;
+  string name = 3;
+  string legal_name = 4;
+  string tax_id = 5;
+  repeated string initial_roles = 6;
+}
+
+message CreatePartyResponse {
+  Party party = 1;
+}
+
+message ListPartiesRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  string party_type = 3;
+  string role_type = 4;
+}
+
+message ListPartiesResponse {
+  repeated Party items = 1;
+  int64 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}

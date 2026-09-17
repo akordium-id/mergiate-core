@@ -126,6 +126,7 @@ Comprehensive guides and architectural specifications are available in the [`doc
 - [M2M API Keys & Service Accounts](docs/service-accounts-and-api-keys.md)
 - [Rate Limiting](docs/rate-limiting.md)
 - [Webhook Engine](docs/webhooks.md)
+- [M2M RPC Protocol (gRPC & ConnectRPC)](docs/rpc-protocol.md)
 - [Getting Started & Local Development](docs/getting-started.md)
 
 ---

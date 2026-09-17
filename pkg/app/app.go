@@ -16,14 +16,17 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc"
 
 	deliveryhttp "github.com/akordium-id/mergiate-core/internal/core/delivery/http"
 	v1 "github.com/akordium-id/mergiate-core/internal/core/delivery/http/v1"
+	deliveryrpc "github.com/akordium-id/mergiate-core/internal/core/delivery/rpc"
 	"github.com/akordium-id/mergiate-core/internal/core/repository/postgres"
 	attachmentusecase "github.com/akordium-id/mergiate-core/internal/core/usecase/attachment"
 	"github.com/akordium-id/mergiate-core/internal/core/usecase/audit"
@@ -74,8 +77,10 @@ type App struct {
 	router           chi.Router
 	outboxWorker     *worker.OutboxWorker
 	webhookDispatcher *worker.WebhookDispatcher
-	rateLimiter      ratelimit.Limiter
-	workerCancel     context.CancelFunc
+	rateLimiter       ratelimit.Limiter
+	rpcServer         *deliveryrpc.Server
+	grpcServer        *grpc.Server
+	workerCancel      context.CancelFunc
 }
 
 // New assembles all core repositories, usecases, handlers, and modules.
@@ -226,6 +231,21 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	}
 
 	router := deliveryhttp.NewRouter(dbPool, handlers)
+	chiRouter := router.(chi.Router)
+
+	// RPC Server (ConnectRPC on HTTP + standalone pure gRPC)
+	rpcServer := deliveryrpc.NewServer(deliveryrpc.Config{
+		TokenManager:    tokenMgr,
+		ApiKeyValidator: serviceAccountUsecase,
+		PartyUsecase:    partyUsecase,
+		AppVersion:      cfg.AppName,
+	})
+	rpcServer.MountConnectRPC(chiRouter)
+
+	var grpcServer *grpc.Server
+	if cfg.GRPCEnabled {
+		grpcServer = rpcServer.BuildGRPCServer()
+	}
 
 	return &App{
 		cfg:               cfg,
@@ -234,10 +254,12 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		tokenMgr:          tokenMgr,
 		moduleHost:        moduleHost,
 		moduleRegistry:    moduleRegistry,
-		router:            router.(chi.Router),
+		router:            chiRouter,
 		outboxWorker:      outboxWorker,
 		webhookDispatcher: webhookDispatcher,
 		rateLimiter:       limiter,
+		rpcServer:         rpcServer,
+		grpcServer:        grpcServer,
 	}, nil
 }
 
@@ -256,7 +278,13 @@ func (a *App) Tokens() auth.TokenManager { return a.tokenMgr }
 // Logger returns the application logger.
 func (a *App) Logger() *slog.Logger { return a.logger }
 
-// Start begins the outbox worker, webhook dispatcher, and HTTP server.
+// GRPCServer returns the pure gRPC server if GRPCEnabled is true, or nil.
+func (a *App) GRPCServer() *grpc.Server { return a.grpcServer }
+
+// RPC returns the unified RPC Server assembly.
+func (a *App) RPC() *deliveryrpc.Server { return a.rpcServer }
+
+// Start begins the outbox worker, webhook dispatcher, and HTTP server (plus gRPC server if enabled).
 // It blocks until the context is cancelled or the server encounters a fatal error.
 func (a *App) Start(ctx context.Context) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
@@ -265,6 +293,22 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Start webhook dispatcher — subscribes to event bus synchronously then returns.
 	a.webhookDispatcher.Start(workerCtx)
+
+	// Start pure gRPC server if enabled
+	if a.grpcServer != nil && a.cfg.GRPCEnabled {
+		grpcAddr := fmt.Sprintf(":%s", a.cfg.GRPCPort)
+		lis, err := net.Listen("tcp", grpcAddr)
+		if err != nil {
+			return fmt.Errorf("grpc listener on %s: %w", grpcAddr, err)
+		}
+
+		go func() {
+			a.logger.Info("gRPC server listening", slog.String("addr", grpcAddr))
+			if err := a.grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+				a.logger.Error("gRPC server error", slog.Any("error", err))
+			}
+		}()
+	}
 
 	addr := fmt.Sprintf(":%s", a.cfg.AppPort)
 	server := &http.Server{
@@ -281,6 +325,11 @@ func (a *App) Start(ctx context.Context) error {
 		<-ctx.Done()
 		a.logger.Info("context cancelled, shutting down")
 		workerCancel()
+
+		if a.grpcServer != nil {
+			a.logger.Info("stopping gRPC server")
+			a.grpcServer.GracefulStop()
+		}
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
@@ -307,6 +356,9 @@ func (a *App) Start(ctx context.Context) error {
 func (a *App) Shutdown(ctx context.Context) error {
 	if a.workerCancel != nil {
 		a.workerCancel()
+	}
+	if a.grpcServer != nil {
+		a.grpcServer.GracefulStop()
 	}
 	if a.rateLimiter != nil {
 		a.rateLimiter.Close()

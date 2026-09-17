@@ -32,6 +32,10 @@ type Config struct {
 	RateLimitEnabled    bool // RATE_LIMIT_ENABLED (default: false)
 	RateLimitPerMinute  int  // RATE_LIMIT_PER_MINUTE (default: 300)
 	RateLimitBurst      int  // RATE_LIMIT_BURST — unused by in-memory impl, reserved for Redis token bucket
+
+	// gRPC (GRPC_*)
+	GRPCEnabled bool   // GRPC_ENABLED (default: true)
+	GRPCPort    string // GRPC_PORT (default: "50051")
 }
 
 // IsProduction returns true if AppEnv is a production-like environment.
@@ -105,6 +109,9 @@ func Load() (*Config, error) {
 	rateLimitPerMinute := int(getEnvAsInt32("RATE_LIMIT_PER_MINUTE", 300))
 	rateLimitBurst := int(getEnvAsInt32("RATE_LIMIT_BURST", 50))
 
+	grpcEnabled := getEnv("GRPC_ENABLED", "true") == "true"
+	grpcPort := getEnv("GRPC_PORT", "50051")
+
 	cfg := &Config{
 		AppEnv:             appEnv,
 		AppPort:            appPort,
@@ -121,6 +128,8 @@ func Load() (*Config, error) {
 		RateLimitEnabled:   rateLimitEnabled,
 		RateLimitPerMinute: rateLimitPerMinute,
 		RateLimitBurst:     rateLimitBurst,
+		GRPCEnabled:        grpcEnabled,
+		GRPCPort:           grpcPort,
 	}
 	return cfg, nil
 }

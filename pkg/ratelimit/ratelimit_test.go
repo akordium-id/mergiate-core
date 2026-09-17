@@ -18,7 +18,7 @@ func TestInMemory_AllowsUnderLimit(t *testing.T) {
 	defer l.Close()
 
 	ctx := context.Background()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		res := l.Allow(ctx, "tenant:abc")
 		require.True(t, res.Allowed, "request %d should be allowed", i+1)
 		assert.Equal(t, 5, res.Limit)
@@ -33,7 +33,7 @@ func TestInMemory_BlocksOverLimit(t *testing.T) {
 	defer l.Close()
 
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		l.Allow(ctx, "tenant:xyz")
 	}
 
@@ -80,7 +80,7 @@ func TestInMemory_RemainingDecrementsCorrectly(t *testing.T) {
 func TestNoopLimiter_AlwaysAllows(t *testing.T) {
 	l := ratelimit.NoopLimiter{}
 	ctx := context.Background()
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		res := l.Allow(ctx, "any-key")
 		assert.True(t, res.Allowed)
 	}

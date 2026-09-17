@@ -31,10 +31,7 @@ func RateLimit(limiter ratelimit.Limiter) func(next http.Handler) http.Handler {
 			setRateLimitHeaders(w, res)
 
 			if !res.Allowed {
-				retryAfter := int(time.Until(res.ResetAt).Seconds())
-				if retryAfter < 1 {
-					retryAfter = 1
-				}
+				retryAfter := max(int(time.Until(res.ResetAt).Seconds()), 1)
 				w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 				response.Err(w, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED",
 					fmt.Sprintf("Rate limit exceeded. Try again in %d seconds.", retryAfter))
