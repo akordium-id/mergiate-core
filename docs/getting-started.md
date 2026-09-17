@@ -26,8 +26,9 @@ Default configuration variables:
 APP_ENV=development
 APP_PORT=8080
 APP_NAME=mergiate-core
+HTTP2_ENABLED=true
 
-# PostgreSQL 17
+# Database (PostgreSQL 17)
 DB_HOST=localhost
 DB_PORT=5434
 DB_USER=mergiate
@@ -35,12 +36,22 @@ DB_PASSWORD=mergiate_password
 DB_NAME=mergiate_core
 DB_SSLMODE=disable
 
+# Connection Pool Tuning
+DB_MAX_CONNS=15
+DB_MIN_CONNS=3
+DB_MAX_CONN_IDLE=15m
+DB_MAX_CONN_LIFE=1h
+DB_PGBOUNCER=false
+
 # Redis 7
 REDIS_HOST=localhost
 REDIS_PORT=6380
 ```
 
-> **Note**: Port `5434` is used by default for PostgreSQL and `6380` for Redis to prevent port conflicts with standard local installations on `5432` and `6379`.
+> **Performance Notes**:
+> - `HTTP2_ENABLED=true` enables HTTP/2 Cleartext (`h2c`) multiplexing, recommended for ConnectRPC and modern reverse proxies. Set to `false` if your proxy requires HTTP/1.1.
+> - `DB_PGBOUNCER=true` disables named prepared statement caching, making the app fully compatible with PgBouncer transaction pooling, Supabase, Neon, or AWS RDS Proxy.
+> - Default PostgreSQL port is `5434` and Redis port is `6380` to prevent collisions with existing host services.
 
 ---
 

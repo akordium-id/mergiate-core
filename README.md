@@ -131,6 +131,12 @@ Comprehensive guides and architectural specifications are available in the [`doc
 
 ---
 
+## Contributing
+
+Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) to understand our 7 architectural invariants, coding standards, and PR process.
+
+---
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) for details.
