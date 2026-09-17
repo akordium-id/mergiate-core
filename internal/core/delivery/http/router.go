@@ -55,6 +55,7 @@ func NewRouter(db *pgxpool.Pool, handlers Handlers) http.Handler {
 	r.Use(chimiddleware.ClientIPFromHeader("X-Real-IP"))
 	r.Use(middleware.RequestLogger())
 	r.Use(chimiddleware.Recoverer)
+	r.Use(chimiddleware.Compress(5))
 
 	// CORS — never combine wildcard origins with AllowCredentials (invalid per spec).
 	// Wildcard entries are filtered out to prevent misconfiguration.

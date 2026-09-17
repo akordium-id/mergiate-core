@@ -22,6 +22,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 
 	deliveryhttp "github.com/akordium-id/mergiate-core/internal/core/delivery/http"
@@ -311,9 +313,11 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	addr := fmt.Sprintf(":%s", a.cfg.AppPort)
+	// h2c allows HTTP/2 cleartext multiplexing (standard for ConnectRPC and modern reverse proxies)
+	h2cHandler := h2c.NewHandler(a.router, &http2.Server{})
 	server := &http.Server{
 		Addr:         addr,
-		Handler:      a.router,
+		Handler:      h2cHandler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

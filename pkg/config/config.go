@@ -81,8 +81,8 @@ func Load() (*Config, error) {
 		)
 	}
 
-	maxConns := getEnvAsInt32("DB_MAX_CONNS", 25)
-	minConns := getEnvAsInt32("DB_MIN_CONNS", 5)
+	maxConns := getEnvAsInt32("DB_MAX_CONNS", 15)
+	minConns := getEnvAsInt32("DB_MIN_CONNS", 3)
 
 	jwtSecret := getEnv("JWT_SECRET", insecureJWTSecretFallback)
 	jwtExpiryStr := getEnv("JWT_EXPIRY", "24h")
